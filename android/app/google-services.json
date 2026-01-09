@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "757329562668",
+    "project_id": "rainnest-aab0f",
+    "storage_bucket": "rainnest-aab0f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:757329562668:android:30e8c426d639d8a3195589",
+        "android_client_info": {
+          "package_name": "com.example.rainnest"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "757329562668-il7g7mbqjfuqr2qrnahh6a1auopful8a.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.rainnest",
+            "certificate_hash": "6cab2b058265857a89dd97ef15462ff02bdee8e5"
+          }
+        },
+        {
+          "client_id": "757329562668-97dqcr7c7sbapgdpf5snk6at9v3eb7jc.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAyGmgcjhFLKw4YZ1er_VyffBojnw_hCD8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "757329562668-97dqcr7c7sbapgdpf5snk6at9v3eb7jc.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
