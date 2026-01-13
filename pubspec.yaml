@@ -46,6 +46,13 @@ dependencies:
   geolocator: ^10.1.0
   google_fonts: ^6.1.0
   
+  # Production requirements
+  flutter_dotenv: ^5.1.0
+  intl: ^0.19.0
+  flutter_local_notifications: ^18.0.1
+  permission_handler: ^11.3.1
+  provider: ^6.1.2
+  
 
 dev_dependencies:
   flutter_test:
@@ -72,6 +79,7 @@ flutter:
   assets:
     - assets/images/logo.png
     - assets/images/google_logo.png
+    - .env
     
   # To add assets to your application, add an assets section, like this:
   # assets:

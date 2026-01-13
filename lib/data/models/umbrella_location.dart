@@ -7,6 +7,8 @@ class UmbrellaLocation {
   final double latitude;
   final double longitude;
   final int totalSlots;
+  final int availableUmbrellas;
+  final int availableReturnSlots;
   final List<String> slotIds;
   final DateTime createdAt;
 
@@ -17,6 +19,8 @@ class UmbrellaLocation {
     required this.latitude,
     required this.longitude,
     required this.totalSlots,
+    required this.availableUmbrellas,
+    required this.availableReturnSlots,
     required this.slotIds,
     required this.createdAt,
   });
@@ -28,6 +32,8 @@ class UmbrellaLocation {
       'latitude': latitude,
       'longitude': longitude,
       'totalSlots': totalSlots,
+      'availableUmbrellas': availableUmbrellas,
+      'availableReturnSlots': availableReturnSlots,
       'slotIds': slotIds,
       'createdAt': Timestamp.fromDate(createdAt),
     };
@@ -41,6 +47,8 @@ class UmbrellaLocation {
       latitude: (map['latitude'] as num).toDouble(),
       longitude: (map['longitude'] as num).toDouble(),
       totalSlots: map['totalSlots'] ?? 0,
+      availableUmbrellas: map['availableUmbrellas'] ?? 0,
+      availableReturnSlots: map['availableReturnSlots'] ?? 0,
       slotIds: List<String>.from(map['slotIds'] ?? []),
       createdAt: (map['createdAt'] as Timestamp).toDate(),
     );

@@ -222,7 +222,7 @@ class _RainfallLoadingState extends State<RainfallLoading>
             Text(
               _loadingText.toUpperCase(),
               style: TextStyle(
-                color: Colors.black.withOpacity(0.4),
+                color: Colors.black.withValues(alpha: 0.4),
                 fontSize: 12,
                 fontWeight: FontWeight.w400,
                 letterSpacing: 2,
@@ -282,7 +282,7 @@ class CloudPainter extends CustomPainter {
     // Instead of using MaskFilter.blur which can trigger Impeller issues when combined with certain opacities,
     // we use a simple fill with opacity. If blur is needed, it's safer to use it on a separate layer or optimize the path.
     final paint = Paint()
-      ..color = Colors.white.withOpacity(opacity * 0.8)
+      ..color = Colors.white.withValues(alpha: opacity * 0.8)
       ..style = PaintingStyle.fill;
     // removed MaskFilter.blur to test if this is the cause of Impeller error
 
@@ -314,7 +314,8 @@ class MeadowPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     // Distant Hills
-    final hillPaint = Paint()..color = const Color(0xFF81C784).withOpacity(0.4);
+    final hillPaint = Paint()
+      ..color = const Color(0xFF81C784).withValues(alpha: 0.4);
     final hillPath = Path();
     hillPath.moveTo(0, size.height);
     hillPath.lineTo(0, size.height * 0.3);
@@ -401,7 +402,7 @@ class CoordinatedRainPainter extends CustomPainter {
       double currentY = (drop.y + progress * drop.speed * 10) % 1.0;
       double currentX = drop.x; // No horizontal drift
 
-      paint.color = Colors.white.withOpacity(drop.opacity);
+      paint.color = Colors.white.withValues(alpha: drop.opacity);
 
       double startX = currentX * size.width;
       double startY = currentY * size.height;
@@ -436,7 +437,7 @@ class FallingLeavesPainter extends CustomPainter {
       canvas.translate(currentX * size.width, currentY * size.height);
       canvas.rotate(currentRotation);
 
-      paint.color = leaf.color.withOpacity(0.6);
+      paint.color = leaf.color.withValues(alpha: 0.6);
 
       final path = Path();
       path.moveTo(0, -leaf.size);

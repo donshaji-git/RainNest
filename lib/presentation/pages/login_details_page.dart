@@ -3,7 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:country_code_picker/country_code_picker.dart';
 import '../../data/models/user_model.dart';
 import '../../services/database_service.dart';
-import 'umbrella_map_page.dart';
+import 'home_page.dart';
 
 class LoginDetailsPage extends StatefulWidget {
   const LoginDetailsPage({super.key});
@@ -83,7 +83,7 @@ class _LoginDetailsPageState extends State<LoginDetailsPage> {
           if (!mounted) return;
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(builder: (context) => const UmbrellaMapPage()),
+            MaterialPageRoute(builder: (context) => const HomePage()),
           );
         }
       } catch (e) {
@@ -162,7 +162,7 @@ class _LoginDetailsPageState extends State<LoginDetailsPage> {
                       borderRadius: BorderRadius.circular(30),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.08),
+                          color: Colors.black.withValues(alpha: 0.08),
                           blurRadius: 25,
                           offset: const Offset(0, 10),
                         ),
@@ -282,8 +282,9 @@ class _LoginDetailsPageState extends State<LoginDetailsPage> {
                             validator: (v) {
                               if (v == null || v.isEmpty) return "Required";
                               if (v.length != 6) return "Must be 6 digits";
-                              if (int.tryParse(v) == null)
+                              if (int.tryParse(v) == null) {
                                 return "Numbers only";
+                              }
                               return null;
                             },
                           ),
@@ -302,7 +303,7 @@ class _LoginDetailsPageState extends State<LoginDetailsPage> {
                                 foregroundColor: Colors.white,
                                 disabledBackgroundColor: const Color(
                                   0xFF0066FF,
-                                ).withOpacity(0.5),
+                                ).withValues(alpha: 0.5),
                                 elevation: 0,
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(16),

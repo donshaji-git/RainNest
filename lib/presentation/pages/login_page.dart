@@ -64,9 +64,18 @@ class _LoginPageState extends State<LoginPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Google Sign-In failed: ${e.toString()}")),
-      );
+
+      String errorMessage = "Google Sign-In failed: ${e.toString()}";
+
+      // Handle user cancellation gracefully
+      if (e.toString().contains('cancelled') ||
+          e.toString().contains('canceled')) {
+        errorMessage = "Sign-in was cancelled. Please try again.";
+      }
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(errorMessage)));
     }
   }
 
@@ -115,7 +124,7 @@ class _LoginPageState extends State<LoginPage> {
                         borderRadius: BorderRadius.circular(30),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
+                            color: Colors.black.withValues(alpha: 0.1),
                             blurRadius: 20,
                             offset: const Offset(0, 10),
                           ),

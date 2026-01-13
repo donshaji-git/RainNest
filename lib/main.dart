@@ -7,6 +7,7 @@ import 'presentation/pages/login_page.dart';
 import 'presentation/pages/umbrella_map_page.dart';
 import 'presentation/pages/login_details_page.dart';
 import 'presentation/widgets/rainfall_loading.dart';
+import 'presentation/pages/home_page.dart';
 import 'presentation/constants/admin_constants.dart';
 
 void main() async {
@@ -79,7 +80,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
         }
 
         if (_userExists == true) {
-          return const UmbrellaMapPage();
+          return const HomePage();
         } else {
           return const LoginDetailsPage();
         }

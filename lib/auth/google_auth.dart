@@ -3,26 +3,36 @@ import 'package:google_sign_in/google_sign_in.dart';
 
 class GoogleAuthService {
   static Future<UserCredential> signInWithGoogle() async {
-    final GoogleSignIn googleSignIn = GoogleSignIn.instance;
+    try {
+      final GoogleSignIn googleSignIn = GoogleSignIn.instance;
 
-    // Initialize the plugin (required for v7.x)
-    await googleSignIn.initialize();
+      // Initialize the plugin (required for v7.x)
+      await googleSignIn.initialize();
 
-    // Start authentication (replaces signIn() in v7.x)
-    final googleUser = await googleSignIn.authenticate();
+      // Start authentication (replaces signIn() in v7.x)
+      final googleUser = await googleSignIn.authenticate();
 
-    // Get auth details
-    final GoogleSignInAuthentication googleAuth = googleUser.authentication;
+      // Get auth details
+      final GoogleSignInAuthentication googleAuth = googleUser.authentication;
 
-    // Create Firebase credential
-    // Note: idToken is usually sufficient for Firebase Google Auth.
-    final OAuthCredential credential = GoogleAuthProvider.credential(
-      idToken: googleAuth.idToken,
-    );
+      // Create Firebase credential
+      // Note: idToken is usually sufficient for Firebase Google Auth.
+      final OAuthCredential credential = GoogleAuthProvider.credential(
+        idToken: googleAuth.idToken,
+      );
 
-    // Sign in to Firebase
-    UserCredential userCredential = await FirebaseAuth.instance
-        .signInWithCredential(credential);
-    return userCredential;
+      // Sign in to Firebase
+      UserCredential userCredential = await FirebaseAuth.instance
+          .signInWithCredential(credential);
+      return userCredential;
+    } catch (e) {
+      // Handle cancellation or other errors
+      if (e.toString().contains('canceled') ||
+          e.toString().contains('cancelled') ||
+          e.toString().contains('activity is cancelled')) {
+        throw Exception('Google Sign-In was cancelled');
+      }
+      rethrow;
+    }
   }
 }

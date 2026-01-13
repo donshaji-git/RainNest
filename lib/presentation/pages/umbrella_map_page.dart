@@ -99,8 +99,9 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
           ElevatedButton(
             onPressed: () async {
               if (nameController.text.isEmpty ||
-                  slotCountController.text.isEmpty)
+                  slotCountController.text.isEmpty) {
                 return;
+              }
 
               final totalSlots = int.tryParse(slotCountController.text) ?? 0;
               // Generate fixed holder IDs: S1, S2, S3...
@@ -116,9 +117,17 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
                 latitude: existingMachine?.latitude ?? point!.latitude,
                 longitude: existingMachine?.longitude ?? point!.longitude,
                 totalSlots: totalSlots,
+                availableUmbrellas:
+                    existingMachine?.availableUmbrellas ?? totalSlots,
+                availableReturnSlots:
+                    existingMachine?.availableReturnSlots ?? 0,
                 slotIds: slotIds,
                 createdAt: existingMachine?.createdAt ?? DateTime.now(),
               );
+
+              // Capture context before async operation
+              final navigator = Navigator.of(context);
+              final messenger = ScaffoldMessenger.of(context);
 
               try {
                 if (existingMachine == null) {
@@ -127,24 +136,20 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
                   await _db.updateUmbrellaLocation(machine);
                 }
 
-                if (mounted) {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        existingMachine == null
-                            ? "Machine added"
-                            : "Machine updated",
-                      ),
+                if (!mounted) return;
+                navigator.pop();
+                messenger.showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      existingMachine == null
+                          ? "Machine added"
+                          : "Machine updated",
                     ),
-                  );
-                }
+                  ),
+                );
               } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(SnackBar(content: Text("Error: $e")));
-                }
+                if (!mounted) return;
+                messenger.showSnackBar(SnackBar(content: Text("Error: $e")));
               }
             },
             style: ElevatedButton.styleFrom(
@@ -300,8 +305,12 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
           ),
           ElevatedButton(
             onPressed: () async {
+              // Capture context before async operation
+              final navigator = Navigator.of(context);
+
               await _db.deleteUmbrellaLocation(location.id);
-              if (mounted) Navigator.pop(context);
+              if (!mounted) return;
+              navigator.pop();
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
@@ -417,7 +426,7 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
                   borderRadius: BorderRadius.circular(30),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
+                      color: Colors.black.withValues(alpha: 0.1),
                       blurRadius: 20,
                       offset: const Offset(0, 10),
                     ),
@@ -442,7 +451,7 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
                                 shape: BoxShape.circle,
                                 boxShadow: [
                                   BoxShadow(
-                                    color: Colors.black.withOpacity(0.2),
+                                    color: Colors.black.withValues(alpha: 0.2),
                                     blurRadius: 6,
                                     offset: const Offset(0, 2),
                                   ),
