@@ -3,10 +3,14 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_typeahead/flutter_typeahead.dart';
+import 'package:provider/provider.dart';
 import '../../data/models/umbrella_location.dart';
 import '../../services/database_service.dart';
 import '../../services/location_service.dart';
 import '../constants/admin_constants.dart';
+import '../../providers/location_provider.dart';
+import '../../providers/map_provider.dart';
+import 'dart:ui';
 
 class UmbrellaMapPage extends StatefulWidget {
   const UmbrellaMapPage({super.key});
@@ -17,13 +21,16 @@ class UmbrellaMapPage extends StatefulWidget {
 
 class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
   final DatabaseService _db = DatabaseService();
-  final MapController _mapController = MapController();
   bool _isAdmin = false;
+  bool _firstLocationFixed = false;
 
   @override
   void initState() {
     super.initState();
     _checkAdminStatus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<LocationProvider>().initialize();
+    });
   }
 
   void _checkAdminStatus() {
@@ -59,34 +66,27 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text(existingMachine == null ? "Add Machine" : "Edit Machine"),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: "Machine Name",
-                  hintText: "e.g. Station Alpha",
-                ),
+                decoration: const InputDecoration(labelText: "Machine Name"),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: descController,
                 decoration: const InputDecoration(
                   labelText: "Landmark / Building",
-                  hintText: "e.g. Science Block, Mall Annex",
                 ),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: slotCountController,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: "Number of Slots",
-                  hintText: "e.g. 10",
-                ),
+                decoration: const InputDecoration(labelText: "Number of Slots"),
               ),
             ],
           ),
@@ -99,12 +99,9 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
           ElevatedButton(
             onPressed: () async {
               if (nameController.text.isEmpty ||
-                  slotCountController.text.isEmpty) {
+                  slotCountController.text.isEmpty)
                 return;
-              }
-
               final totalSlots = int.tryParse(slotCountController.text) ?? 0;
-              // Generate fixed holder IDs: S1, S2, S3...
               final slotIds = List.generate(
                 totalSlots,
                 (index) => "S${index + 1}",
@@ -125,31 +122,18 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
                 createdAt: existingMachine?.createdAt ?? DateTime.now(),
               );
 
-              // Capture context before async operation
               final navigator = Navigator.of(context);
-              final messenger = ScaffoldMessenger.of(context);
-
               try {
                 if (existingMachine == null) {
                   await _db.addUmbrellaLocation(machine);
                 } else {
                   await _db.updateUmbrellaLocation(machine);
                 }
-
-                if (!mounted) return;
                 navigator.pop();
-                messenger.showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      existingMachine == null
-                          ? "Machine added"
-                          : "Machine updated",
-                    ),
-                  ),
-                );
               } catch (e) {
-                if (!mounted) return;
-                messenger.showSnackBar(SnackBar(content: Text("Error: $e")));
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text("Error: $e")));
               }
             },
             style: ElevatedButton.styleFrom(
@@ -170,121 +154,136 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.only(
-            topLeft: Radius.circular(30),
-            topRight: Radius.circular(30),
+      builder: (context) => BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.9),
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(35),
+              topRight: Radius.circular(35),
+            ),
           ),
-        ),
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        loc.machineName,
-                        style: const TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        loc.description,
-                        style: TextStyle(color: Colors.grey[600], fontSize: 16),
-                      ),
-                    ],
-                  ),
-                ),
-                if (_isAdmin)
-                  Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.edit, color: Color(0xFF0066FF)),
-                        onPressed: () {
-                          Navigator.pop(context);
-                          _manageMachine(existingMachine: loc);
-                        },
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete, color: Colors.red),
-                        onPressed: () {
-                          Navigator.pop(context);
-                          _deleteLocation(loc);
-                        },
-                      ),
-                    ],
-                  ),
-              ],
-            ),
-            const Divider(height: 32),
-            Text(
-              "Management Overview",
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey[800],
-                letterSpacing: 1.2,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.blue[50],
-                borderRadius: BorderRadius.circular(15),
-              ),
-              child: Row(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Icon(Icons.grid_view_rounded, color: Color(0xFF0066FF)),
-                  const SizedBox(width: 12),
-                  Text(
-                    "Total Slots: ${loc.totalSlots}",
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF0066FF),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          loc.machineName,
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          loc.description,
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontSize: 16,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
+                  if (_isAdmin)
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(
+                            Icons.edit,
+                            color: Color(0xFF0066FF),
+                          ),
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _manageMachine(existingMachine: loc);
+                          },
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.red),
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _deleteLocation(loc);
+                          },
+                        ),
+                      ],
+                    ),
                 ],
               ),
-            ),
-            const SizedBox(height: 24),
-            SizedBox(
-              height: 40,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                itemCount: loc.slotIds.length,
-                itemBuilder: (context, index) => Container(
-                  margin: const EdgeInsets.only(right: 8),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[100],
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.grey[300]!),
-                  ),
-                  child: Text(
-                    loc.slotIds[index],
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
+              const Divider(height: 40),
+              Text(
+                "MANAGEMENT OVERVIEW",
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey[400],
+                  letterSpacing: 1.5,
+                ),
+              ),
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0066FF).withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.grid_view_rounded,
+                      color: Color(0xFF0066FF),
+                      size: 30,
+                    ),
+                    const SizedBox(width: 15),
+                    Text(
+                      "Total Slots: ${loc.totalSlots}",
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF0066FF),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 25),
+              SizedBox(
+                height: 45,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: loc.slotIds.length,
+                  itemBuilder: (context, index) => Container(
+                    margin: const EdgeInsets.only(right: 10),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey[100]!),
+                    ),
+                    child: Center(
+                      child: Text(
+                        loc.slotIds[index],
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -296,7 +295,7 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
       builder: (context) => AlertDialog(
         title: const Text("Delete Machine"),
         content: Text(
-          "Are you sure you want to delete '${location.machineName}'? This action is permanent.",
+          "Are you sure you want to delete '${location.machineName}'?",
         ),
         actions: [
           TextButton(
@@ -305,12 +304,8 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
           ),
           ElevatedButton(
             onPressed: () async {
-              // Capture context before async operation
-              final navigator = Navigator.of(context);
-
               await _db.deleteUmbrellaLocation(location.id);
-              if (!mounted) return;
-              navigator.pop();
+              if (mounted) Navigator.pop(context);
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
@@ -325,177 +320,313 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
 
   @override
   Widget build(BuildContext context) {
+    final locationProvider = context.watch<LocationProvider>();
+    final mapProvider = context.watch<MapProvider>();
+
+    if (locationProvider.hasLocation && !_firstLocationFixed) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        mapProvider.centerOnUser(locationProvider.currentLocation!);
+        _firstLocationFixed = true;
+      });
+    }
+
     return Scaffold(
       backgroundColor: Colors.white,
       body: Column(
         children: [
-          // Header with Gradient
-          Container(
-            padding: EdgeInsets.only(
-              top: MediaQuery.of(context).padding.top + 10,
-              bottom: 20,
-              left: 24,
-              right: 24,
-            ),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF0066FF), Color(0xFF00CCFF)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+          // Premium Admin Header
+          _buildHeader(mapProvider),
+
+          // Map Section
+          Expanded(
+            flex: 5,
+            child: Container(
+              margin: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(35),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.08),
+                    blurRadius: 30,
+                    offset: const Offset(0, 15),
+                  ),
+                ],
               ),
-              borderRadius: BorderRadius.only(
-                bottomLeft: Radius.circular(30),
-                bottomRight: Radius.circular(30),
-              ),
-            ),
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(35),
+                child: Stack(
                   children: [
-                    const Text(
-                      "RainNest Admin",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
+                    _buildMap(locationProvider, mapProvider),
+                    // Floating Admin Tooltip
+                    Positioned(
+                      top: 20,
+                      right: 20,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(color: Colors.black12, blurRadius: 10),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.touch_app_rounded,
+                              size: 16,
+                              color: Color(0xFF0066FF),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              "Tap map to add machine",
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    IconButton(
-                      icon: const Icon(
-                        Icons.logout_rounded,
-                        color: Colors.white,
-                      ),
-                      onPressed: _logout,
                     ),
                   ],
                 ),
-                const SizedBox(height: 16),
-                // Search Bar
-                TypeAheadField<SearchResult>(
-                  builder: (context, controller, focusNode) => TextField(
-                    controller: controller,
-                    focusNode: focusNode,
-                    style: const TextStyle(color: Colors.black87),
-                    decoration: InputDecoration(
-                      hintText: "Search Building / College",
-                      hintStyle: TextStyle(color: Colors.grey[400]),
-                      prefixIcon: const Icon(
-                        Icons.search_rounded,
-                        color: Color(0xFF0066FF),
-                      ),
-                      filled: true,
-                      fillColor: Colors.white,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 0),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(15),
-                        borderSide: BorderSide.none,
-                      ),
-                    ),
-                  ),
-                  suggestionsCallback: (pattern) =>
-                      LocationService.searchPlaces(pattern),
-                  itemBuilder: (context, suggestion) => ListTile(
-                    dense: true,
-                    title: Text(
-                      suggestion.name,
-                      style: const TextStyle(fontSize: 13),
-                    ),
-                    leading: const Icon(
-                      Icons.location_on_rounded,
-                      color: Color(0xFF0066FF),
-                      size: 18,
-                    ),
-                  ),
-                  onSelected: (suggestion) {
-                    _mapController.move(suggestion.location, 16.0);
-                  },
-                ),
-              ],
+              ),
             ),
           ),
 
-          // Map Container
-          Expanded(
-            flex: 4,
-            child: Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(30),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.1),
-                      blurRadius: 20,
-                      offset: const Offset(0, 10),
+          // Branding Footer
+          Padding(
+            padding: const EdgeInsets.only(bottom: 24),
+            child: Text(
+              "RainNest Infrastructure Management",
+              style: TextStyle(
+                color: Colors.grey[400],
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                letterSpacing: 1,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeader(MapProvider mapProvider) {
+    return Container(
+      padding: EdgeInsets.only(
+        top: MediaQuery.of(context).padding.top + 10,
+        bottom: 25,
+        left: 24,
+        right: 24,
+      ),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFF0066FF), Color(0xFF00B2FF)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(40),
+          bottomRight: Radius.circular(40),
+        ),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    "Admin Terminal",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 26,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: -0.5,
                     ),
-                  ],
+                  ),
+                  Text(
+                    "Infrastructure Overview",
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.8),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+              IconButton(
+                icon: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.logout_rounded,
+                    color: Colors.white,
+                    size: 20,
+                  ),
                 ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(30),
-                  child: StreamBuilder<List<UmbrellaLocation>>(
-                    stream: _db.getUmbrellaLocations(),
-                    builder: (context, snapshot) {
-                      final locations = snapshot.data ?? [];
-                      final markers = locations.map((loc) {
-                        return Marker(
-                          point: LatLng(loc.latitude, loc.longitude),
-                          width: 60,
-                          height: 60,
-                          child: GestureDetector(
-                            onTap: () => _showLocationDetails(loc),
+                onPressed: _logout,
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          TypeAheadField<SearchResult>(
+            builder: (context, controller, focusNode) => Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 15)],
+              ),
+              child: TextField(
+                controller: controller,
+                focusNode: focusNode,
+                decoration: InputDecoration(
+                  hintText: "Search Building / College",
+                  prefixIcon: const Icon(
+                    Icons.search_rounded,
+                    color: Color(0xFF0066FF),
+                  ),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 15),
+                ),
+              ),
+            ),
+            suggestionsCallback: (pattern) =>
+                LocationService.searchPlaces(pattern),
+            itemBuilder: (context, suggestion) => ListTile(
+              title: Text(
+                suggestion.name,
+                style: const TextStyle(fontSize: 14),
+              ),
+              leading: const Icon(
+                Icons.location_on_rounded,
+                color: Color(0xFF0066FF),
+                size: 20,
+              ),
+            ),
+            onSelected: (suggestion) {
+              mapProvider.moveTo(suggestion.location, 16.0);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMap(LocationProvider locationProvider, MapProvider mapProvider) {
+    return StreamBuilder<List<UmbrellaLocation>>(
+      stream: _db.getUmbrellaLocations(),
+      builder: (context, snapshot) {
+        final locations = snapshot.data ?? [];
+        return FlutterMap(
+          mapController: mapProvider.mapController,
+          options: MapOptions(
+            initialCenter:
+                locationProvider.currentLocation ??
+                const LatLng(9.9312, 76.2673),
+            initialZoom: 14,
+            onTap: (tapPosition, point) => _manageMachine(point: point),
+          ),
+          children: [
+            TileLayer(
+              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+              userAgentPackageName: 'com.example.rainnest',
+            ),
+            MarkerLayer(
+              markers: [
+                // User Location (Admin Dot)
+                if (locationProvider.currentLocation != null)
+                  Marker(
+                    point: locationProvider.currentLocation!,
+                    width: 50,
+                    height: 50,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Container(
+                          width: 30,
+                          height: 30,
+                          decoration: BoxDecoration(
+                            color: const Color(
+                              0xFF0066FF,
+                            ).withValues(alpha: 0.2),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        Container(
+                          width: 14,
+                          height: 14,
+                          decoration: const BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(color: Colors.black26, blurRadius: 4),
+                            ],
+                          ),
+                          child: Center(
                             child: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                shape: BoxShape.circle,
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.2),
-                                    blurRadius: 6,
-                                    offset: const Offset(0, 2),
-                                  ),
-                                ],
-                              ),
-                              padding: const EdgeInsets.all(8),
-                              child: const Icon(
-                                Icons.umbrella_rounded,
+                              width: 10,
+                              height: 10,
+                              decoration: const BoxDecoration(
                                 color: Color(0xFF0066FF),
-                                size: 30,
+                                shape: BoxShape.circle,
                               ),
                             ),
                           ),
-                        );
-                      }).toList();
-
-                      return FlutterMap(
-                        mapController: _mapController,
-                        options: MapOptions(
-                          initialCenter: const LatLng(0, 0),
-                          initialZoom: 2.0,
-                          onTap: (tapPosition, point) =>
-                              _manageMachine(point: point),
                         ),
-                        children: [
-                          TileLayer(
-                            urlTemplate:
-                                'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                            userAgentPackageName: 'com.example.rainnest',
+                      ],
+                    ),
+                  ),
+                // Machine Markers
+                ...locations.map(
+                  (loc) => Marker(
+                    point: LatLng(loc.latitude, loc.longitude),
+                    width: 50,
+                    height: 50,
+                    child: GestureDetector(
+                      onTap: () => _showLocationDetails(loc),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black26,
+                              blurRadius: 8,
+                              offset: const Offset(0, 3),
+                            ),
+                          ],
+                          border: Border.all(
+                            color: const Color(0xFF0066FF),
+                            width: 2,
                           ),
-                          MarkerLayer(markers: markers),
-                        ],
-                      );
-                    },
+                        ),
+                        child: const Icon(
+                          Icons.umbrella_rounded,
+                          color: Color(0xFF0066FF),
+                          size: 24,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-              ),
+              ],
             ),
-          ),
-
-          // Reserved Space for future functionalities (Unlabeled)
-          const Expanded(flex: 2, child: SizedBox.shrink()),
-        ],
-      ),
+          ],
+        );
+      },
     );
   }
 }

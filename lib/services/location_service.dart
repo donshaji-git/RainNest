@@ -81,6 +81,26 @@ class LocationService {
     }
   }
 
+  /// Get live position stream with high accuracy.
+  static Stream<Position> getPositionStream() {
+    return Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 2, // Update every 2 meters for smoothness
+      ),
+    );
+  }
+
+  /// Calculate distance between two points in meters using Haversine formula.
+  static double calculateHaversineDistance(
+    double lat1,
+    double lon1,
+    double lat2,
+    double lon2,
+  ) {
+    return Geolocator.distanceBetween(lat1, lon1, lat2, lon2);
+  }
+
   static Future<List<SearchResult>> searchPlaces(String query) async {
     if (query.isEmpty) return [];
 
@@ -108,6 +128,27 @@ class LocationService {
       }
     } catch (e) {
       debugPrint('Search Error: $e');
+    }
+    return [];
+  }
+
+  /// Get routing directions using OSRM
+  static Future<List<LatLng>> getRoute(LatLng start, LatLng end) async {
+    final url = Uri.parse(
+      'https://router.project-osrm.org/route/v1/driving/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=full&geometries=geojson',
+    );
+
+    try {
+      final response = await http.get(url);
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final List coordinates = data['routes'][0]['geometry']['coordinates'];
+        return coordinates.map((c) => LatLng(c[1], c[0])).toList();
+      } else {
+        debugPrint('OSRM Error: ${response.statusCode} - ${response.body}');
+      }
+    } catch (e) {
+      debugPrint('OSRM Error: $e');
     }
     return [];
   }

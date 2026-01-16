@@ -20,20 +20,21 @@ class WeatherService {
       '$_baseUrl?lat=$lat&lon=$lon&appid=$_apiKey&units=metric&exclude=minutely,daily,alerts',
     );
 
+    debugPrint('Weather Request URL: $url');
+
     try {
       final response = await http.get(url);
+      debugPrint('Weather Response Code: ${response.statusCode}');
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         return WeatherData.fromJson(data);
       } else {
-        debugPrint(
-          'Weather API Error: ${response.statusCode} - ${response.body}',
-        );
+        debugPrint('Weather API Error Body: ${response.body}');
         return null;
       }
     } catch (e) {
-      debugPrint('Weather Error: $e');
+      debugPrint('Weather Exception: $e');
       return null;
     }
   }

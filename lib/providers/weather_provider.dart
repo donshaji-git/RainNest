@@ -19,6 +19,28 @@ class WeatherProvider with ChangeNotifier {
   bool get hasWeather => _currentWeather != null;
   bool get hasRainAlert => _currentWeather?.hasRainAlert ?? false;
 
+  String get greeting {
+    if (_currentWeather == null) return 'Welcome back 👋';
+
+    final condition = _currentWeather!.condition.toLowerCase();
+    // Check key conditions first
+    if (condition.contains('rain') ||
+        condition.contains('drizzle') ||
+        condition.contains('thunder')) {
+      return 'Carry an umbrella ☔';
+    } else if (condition.contains('cloud') || condition.contains('overcast')) {
+      return 'Cloudy skies ahead ☁️';
+    } else if (condition.contains('clear') || condition.contains('sunny')) {
+      return 'Perfect weather today ☀️';
+    } else if (condition.contains('wind') || _currentWeather!.windSpeed > 10) {
+      return 'Windy outside 💨';
+    } else if (condition.contains('snow')) {
+      return 'Snowy day ahead ❄️';
+    }
+
+    return 'Have a great day! ✨';
+  }
+
   /// Fetch weather for given location
   Future<void> fetchWeather(LatLng location) async {
     _isLoading = true;
