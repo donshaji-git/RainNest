@@ -6,6 +6,7 @@ import 'package:flutter_typeahead/flutter_typeahead.dart';
 import 'package:provider/provider.dart';
 import '../../data/models/umbrella_location.dart';
 import '../../services/database_service.dart';
+import '../../services/auth_service.dart';
 import '../../services/location_service.dart';
 import '../constants/admin_constants.dart';
 import '../../providers/location_provider.dart';
@@ -23,14 +24,46 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
   final DatabaseService _db = DatabaseService();
   bool _isAdmin = false;
   bool _firstLocationFixed = false;
+  LocationProvider? _locationProvider;
 
   @override
   void initState() {
     super.initState();
     _checkAdminStatus();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<LocationProvider>().initialize();
+      _initialize();
     });
+  }
+
+  void _onLocationChanged() {
+    if (!mounted) return;
+    final locationProvider = context.read<LocationProvider>();
+    final mapProvider = context.read<MapProvider>();
+
+    if (locationProvider.hasLocation && !_firstLocationFixed) {
+      mapProvider.centerOnUser(locationProvider.currentLocation!);
+      _firstLocationFixed = true;
+    }
+  }
+
+  void _initialize() async {
+    _locationProvider = context.read<LocationProvider>();
+
+    // Add listener for future updates
+    _locationProvider?.addListener(_onLocationChanged);
+
+    await _locationProvider?.initialize();
+
+    // Check initial state
+    if (_locationProvider?.hasLocation ?? false) {
+      _onLocationChanged();
+    }
+  }
+
+  @override
+  void dispose() {
+    _locationProvider?.removeListener(_onLocationChanged);
+    super.dispose();
   }
 
   void _checkAdminStatus() {
@@ -41,7 +74,7 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
   }
 
   void _logout() async {
-    await FirebaseAuth.instance.signOut();
+    await AuthService().signOut();
   }
 
   void _manageMachine({
@@ -99,8 +132,9 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
           ElevatedButton(
             onPressed: () async {
               if (nameController.text.isEmpty ||
-                  slotCountController.text.isEmpty)
+                  slotCountController.text.isEmpty) {
                 return;
+              }
               final totalSlots = int.tryParse(slotCountController.text) ?? 0;
               final slotIds = List.generate(
                 totalSlots,
@@ -131,9 +165,11 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
                 }
                 navigator.pop();
               } catch (e) {
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(SnackBar(content: Text("Error: $e")));
+                if (context.mounted) {
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text("Error: $e")));
+                }
               }
             },
             style: ElevatedButton.styleFrom(
@@ -305,7 +341,7 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
           ElevatedButton(
             onPressed: () async {
               await _db.deleteUmbrellaLocation(location.id);
-              if (mounted) Navigator.pop(context);
+              if (context.mounted) Navigator.pop(context);
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
@@ -322,13 +358,6 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
   Widget build(BuildContext context) {
     final locationProvider = context.watch<LocationProvider>();
     final mapProvider = context.watch<MapProvider>();
-
-    if (locationProvider.hasLocation && !_firstLocationFixed) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        mapProvider.centerOnUser(locationProvider.currentLocation!);
-        _firstLocationFixed = true;
-      });
-    }
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -529,6 +558,16 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
     return StreamBuilder<List<UmbrellaLocation>>(
       stream: _db.getUmbrellaLocations(),
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(child: Text('Stream Error: ${snapshot.error}'));
+        }
+
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(color: Color(0xFF0066FF)),
+          );
+        }
+
         final locations = snapshot.data ?? [];
         return FlutterMap(
           mapController: mapProvider.mapController,

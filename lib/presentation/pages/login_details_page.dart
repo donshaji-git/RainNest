@@ -89,6 +89,7 @@ class _LoginDetailsPageState extends State<LoginDetailsPage> {
       } catch (e) {
         if (!mounted) return;
         setState(() => _isLoading = false);
+        if (!mounted) return;
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text("Error: ${e.toString()}")));

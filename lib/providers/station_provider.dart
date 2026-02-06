@@ -37,7 +37,12 @@ class StationProvider with ChangeNotifier {
           notifyListeners();
         },
         onError: (error) {
-          _errorMessage = 'Error loading stations: $error';
+          if (error.toString().contains('permission-denied')) {
+            _errorMessage =
+                'Access denied. Please check your account permissions or try logging in again.';
+          } else {
+            _errorMessage = 'Error loading stations: $error';
+          }
           _isLoading = false;
           debugPrint(_errorMessage);
           notifyListeners();

@@ -15,6 +15,8 @@ import '../widgets/app_bottom_footer.dart';
 
 import 'dart:ui';
 import '../../providers/map_provider.dart';
+import 'profile_page.dart';
+import 'scanner_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -28,6 +30,9 @@ class _HomePageState extends State<HomePage> {
   List<LatLng> _routePoints = [];
   UmbrellaLocation? _selectedStation;
   bool _firstLocationFixed = false;
+  bool _showRecommendation = true;
+  int _currentIndex = 0;
+  LocationProvider? _locationProvider;
 
   @override
   void initState() {
@@ -37,19 +42,66 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  void _initialize() async {
+  void _onLocationChanged() {
+    if (!mounted) return;
     final locationProvider = context.read<LocationProvider>();
     final weatherProvider = context.read<WeatherProvider>();
     final stationProvider = context.read<StationProvider>();
-
-    await locationProvider.initialize();
+    final mapProvider = context.read<MapProvider>();
 
     if (locationProvider.hasLocation) {
       final loc = locationProvider.currentLocation!;
+
+      // Update other providers
+      stationProvider.updateLocation(loc);
+
+      // Center map on first fix
+      if (!_firstLocationFixed) {
+        mapProvider.centerOnUser(loc);
+        _firstLocationFixed = true;
+
+        // Fetch weather and initial directions
+        weatherProvider.fetchWeather(loc);
+        if (stationProvider.nearestStation != null) {
+          _fetchDirections(stationProvider.nearestStation!);
+        }
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _locationProvider?.removeListener(_onLocationChanged);
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _initialize() async {
+    _locationProvider = context.read<LocationProvider>();
+    final stationProvider = context.read<StationProvider>();
+    final weatherProvider = context.read<WeatherProvider>();
+
+    // 1. Start station listener immediately (with null location initially)
+    stationProvider.initialize(_locationProvider?.currentLocation);
+
+    // 2. Add listener for future location updates
+    _locationProvider?.addListener(_onLocationChanged);
+
+    // 3. Request location fix
+    await _locationProvider?.initialize();
+
+    // 4. If we have location already, sync everything
+    if (_locationProvider?.hasLocation ?? false) {
+      final loc = _locationProvider!.currentLocation!;
+      stationProvider.updateLocation(loc);
       weatherProvider.fetchWeather(loc);
-      stationProvider.initialize(loc);
-    } else {
-      stationProvider.initialize(null);
+
+      if (!_firstLocationFixed) {
+        if (context.mounted) {
+          context.read<MapProvider>().centerOnUser(loc);
+          _firstLocationFixed = true;
+        }
+      }
     }
   }
 
@@ -103,146 +155,198 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  void _showAllStations(
+    StationProvider stationProvider,
+    LocationProvider locationProvider,
+  ) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.7,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(35),
+            topRight: Radius.circular(35),
+          ),
+        ),
+        child: Column(
+          children: [
+            const SizedBox(height: 12),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[200],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              "All Stations",
+              style: GoogleFonts.outfit(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Expanded(
+              child: _buildStationList(stationProvider, locationProvider),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: IndexedStack(
+        index: _currentIndex,
+        children: [
+          _buildHomeBody(),
+          const Center(child: Text("Log Page (Coming Soon)")),
+          const Center(child: Text("Wallet Page (Coming Soon)")),
+          const ProfilePage(),
+        ],
+      ),
+      bottomNavigationBar: AppBottomFooter(
+        currentIndex: _currentIndex,
+        onItemSelected: (i) {
+          setState(() {
+            _currentIndex = i;
+          });
+        },
+        onScanPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const ScannerPage()),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildHomeBody() {
     final locationProvider = context.watch<LocationProvider>();
     final weatherProvider = context.watch<WeatherProvider>();
     final stationProvider = context.watch<StationProvider>();
     final mapProvider = context.watch<MapProvider>();
 
-    // Update station provider with latest user location
-    if (locationProvider.hasLocation) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        stationProvider.updateLocation(locationProvider.currentLocation);
-
-        if (!_firstLocationFixed && locationProvider.currentLocation != null) {
-          mapProvider.centerOnUser(locationProvider.currentLocation!);
-          _firstLocationFixed = true;
-
-          if (stationProvider.nearestStation != null) {
-            _fetchDirections(stationProvider.nearestStation!);
-          }
-        }
-      });
-    }
-
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: Stack(
-        children: [
-          // Background Gradient to match premium feel
-          Positioned.fill(
-            child: Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFFF0F7FF), Colors.white],
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                ),
+    return Stack(
+      children: [
+        // Background Gradient to match premium feel
+        Positioned.fill(
+          child: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFFF0F7FF), Colors.white],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
               ),
             ),
           ),
+        ),
 
-          SafeArea(
-            child: Column(
-              children: [
-                // 1. Premium Header
-                _buildHeader(weatherProvider, locationProvider, mapProvider),
+        SafeArea(
+          child: Column(
+            children: [
+              // 1. Premium Header
+              _buildHeader(weatherProvider, locationProvider, mapProvider),
 
-                // 2. Map Section with Floating Card
-                Expanded(
-                  child: Stack(
-                    children: [
-                      // Map Container
-                      Container(
-                        margin: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(35),
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(
-                                0xFF0066FF,
-                              ).withValues(alpha: 0.1),
-                              blurRadius: 30,
-                              offset: const Offset(0, 15),
-                            ),
-                          ],
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(35),
-                          child: _buildMap(
-                            locationProvider,
-                            stationProvider,
-                            mapProvider,
+              // 2. Map Section with Floating Card
+              Expanded(
+                child: Stack(
+                  children: [
+                    // Map Container
+                    Container(
+                      margin: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(35),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(
+                              0xFF0066FF,
+                            ).withValues(alpha: 0.1),
+                            blurRadius: 30,
+                            offset: const Offset(0, 15),
                           ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(35),
+                        child: _buildMap(
+                          locationProvider,
+                          stationProvider,
+                          mapProvider,
                         ),
                       ),
+                    ),
 
-                      // Floating Recommendation Card
-                      if (stationProvider.nearestStation != null &&
-                          locationProvider.hasLocation)
-                        Positioned(
-                          bottom: 25,
-                          left: 35,
-                          right: 35,
-                          child: _buildRecommendationCard(
-                            stationProvider.nearestStation!,
-                            locationProvider,
-                          ),
+                    // Floating Recommendation Card
+                    if (stationProvider.nearestStation != null &&
+                        locationProvider.hasLocation &&
+                        _showRecommendation)
+                      Positioned(
+                        bottom: 25,
+                        left: 35,
+                        right: 35,
+                        child: _buildRecommendationCard(
+                          stationProvider.nearestStation!,
+                          locationProvider,
                         ),
-                    ],
-                  ),
+                      ),
+                  ],
                 ),
+              ),
 
-                // 3. Station List Title
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 12,
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        "Nearby Stations",
+              // 3. Station List Title
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      "Nearby Stations",
+                      style: GoogleFonts.outfit(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: const Color(0xFF1A1A1A),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () =>
+                          _showAllStations(stationProvider, locationProvider),
+                      child: Text(
+                        "View All",
                         style: GoogleFonts.outfit(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: const Color(0xFF1A1A1A),
+                          color: const Color(0xFF0066FF),
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                      TextButton(
-                        onPressed: () {},
-                        child: Text(
-                          "View All",
-                          style: GoogleFonts.outfit(
-                            color: const Color(0xFF0066FF),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
+              ),
 
-                // 4. Station List (Glassmorphism inspired items)
-                Expanded(
-                  child: _buildStationList(stationProvider, locationProvider),
-                ),
-              ],
-            ),
+              // 4. Station List (Glassmorphism inspired items)
+              Expanded(
+                child: _buildStationList(stationProvider, locationProvider),
+              ),
+            ],
           ),
-        ],
-      ),
-      bottomNavigationBar: AppBottomFooter(
-        currentIndex: 0,
-        onItemSelected: (i) {},
-        onScanPressed: () {},
-      ),
+        ),
+      ],
     );
   }
 
@@ -293,45 +397,101 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
               ),
-              if (weatherProvider.hasWeather)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.05),
-                        blurRadius: 10,
-                        offset: const Offset(0, 5),
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    children: [
-                      Text(
-                        WeatherService.getWeatherIcon(
-                          weatherProvider.currentWeather!.condition,
-                        ),
-                        style: const TextStyle(fontSize: 24),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '${weatherProvider.currentWeather!.temperature.toStringAsFixed(0)}°',
-                        style: GoogleFonts.outfit(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: const Color(0xFF1A1A1A),
-                        ),
-                      ),
-                    ],
+              if (weatherProvider.isLoading)
+                const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Color(0xFF0066FF),
                   ),
                 ),
+              if (weatherProvider.hasWeather && !weatherProvider.isLoading)
+                GestureDetector(
+                  onTap: () {
+                    // Could show weather details dialog
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.05),
+                          blurRadius: 10,
+                          offset: const Offset(0, 5),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              '${weatherProvider.currentWeather!.temperature.toStringAsFixed(0)}°',
+                              style: GoogleFonts.outfit(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: const Color(0xFF1A1A1A),
+                              ),
+                            ),
+                            Text(
+                              weatherProvider.currentWeather!.condition,
+                              style: GoogleFonts.outfit(
+                                fontSize: 10,
+                                color: Colors.grey[600],
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          WeatherService.getWeatherIcon(
+                            weatherProvider.currentWeather!.condition,
+                          ),
+                          style: const TextStyle(fontSize: 28),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              if (!weatherProvider.hasWeather &&
+                  !weatherProvider.isLoading &&
+                  weatherProvider.errorMessage != null)
+                const Icon(Icons.cloud_off_rounded, color: Colors.grey),
             ],
           ),
+          if (weatherProvider.hasWeather && !weatherProvider.isLoading) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                _buildWeatherDetailItem(
+                  Icons.water_drop_rounded,
+                  '${weatherProvider.currentWeather!.humidity}%',
+                  'Humidity',
+                ),
+                const SizedBox(width: 15),
+                _buildWeatherDetailItem(
+                  Icons.air_rounded,
+                  '${weatherProvider.currentWeather!.windSpeed.toStringAsFixed(1)} m/s',
+                  'Wind',
+                ),
+                const SizedBox(width: 15),
+                _buildWeatherDetailItem(
+                  Icons.thermostat_rounded,
+                  '${weatherProvider.currentWeather!.feelsLike.toStringAsFixed(0)}°',
+                  'Feels like',
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 20),
           // Search Bar
           TypeAheadField<SearchResult>(
@@ -584,81 +744,140 @@ class _HomePageState extends State<HomePage> {
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
         child: Container(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.fromLTRB(20, 20, 10, 20),
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: 0.85),
             borderRadius: BorderRadius.circular(25),
             border: Border.all(color: Colors.white.withValues(alpha: 0.5)),
           ),
-          child: Row(
+          child: Stack(
             children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0066FF).withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(15),
-                ),
-                child: const Icon(
-                  Icons.stars_rounded,
-                  color: Color(0xFF0066FF),
-                  size: 30,
-                ),
-              ),
-              const SizedBox(width: 15),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF0066FF),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        "NEAREST RENTING MACHINE",
-                        style: GoogleFonts.outfit(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.5,
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0066FF).withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                    child: const Icon(
+                      Icons.stars_rounded,
+                      color: Color(0xFF0066FF),
+                      size: 30,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0066FF),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            "NEAREST RENTING MACHINE",
+                            style: GoogleFonts.outfit(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
                         ),
-                      ),
+                        const SizedBox(height: 6),
+                        Text(
+                          station.machineName,
+                          style: GoogleFonts.outfit(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFF1A1A1A),
+                          ),
+                        ),
+                        Text(
+                          "$distanceText away • ${station.availableUmbrellas} Available",
+                          style: GoogleFonts.outfit(
+                            color: Colors.grey[600],
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 6),
-                    Text(
-                      station.machineName,
-                      style: GoogleFonts.outfit(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: const Color(0xFF1A1A1A),
-                      ),
+                  ),
+                  IconButton(
+                    onPressed: () => _showStationDetails(station),
+                    icon: const Icon(
+                      Icons.arrow_forward_ios_rounded,
+                      color: Color(0xFF0066FF),
+                      size: 20,
                     ),
-                    Text(
-                      "$distanceText away • ${station.availableUmbrellas} Available",
-                      style: GoogleFonts.outfit(
-                        color: Colors.grey[600],
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-              IconButton(
-                onPressed: () => _showStationDetails(station),
-                icon: const Icon(
-                  Icons.arrow_forward_ios_rounded,
-                  color: Color(0xFF0066FF),
-                  size: 20,
+              Positioned(
+                top: -12,
+                right: -6,
+                child: IconButton(
+                  onPressed: () {
+                    setState(() {
+                      _showRecommendation = false;
+                    });
+                  },
+                  icon: Icon(
+                    Icons.close_rounded,
+                    color: Colors.grey[400],
+                    size: 18,
+                  ),
                 ),
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildWeatherDetailItem(IconData icon, String value, String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.grey.withValues(alpha: 0.1)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: const Color(0xFF0066FF)),
+          const SizedBox(width: 6),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                value,
+                style: GoogleFonts.outfit(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: const Color(0xFF1A1A1A),
+                ),
+              ),
+              Text(
+                label,
+                style: GoogleFonts.outfit(
+                  fontSize: 9,
+                  color: Colors.grey[600],
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -668,9 +887,7 @@ class _HomePageState extends State<HomePage> {
     LocationProvider locationProvider,
   ) {
     if (stationProvider.isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(color: Color(0xFF0066FF)),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (stationProvider.stations.isEmpty) {
@@ -678,10 +895,10 @@ class _HomePageState extends State<HomePage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.search_off_rounded, size: 48, color: Colors.grey[300]),
-            const SizedBox(height: 12),
+            Icon(Icons.umbrella_rounded, size: 48, color: Colors.grey[300]),
+            const SizedBox(height: 16),
             Text(
-              "No machines found nearby",
+              "No stations found nearby",
               style: GoogleFonts.outfit(color: Colors.grey[600]),
             ),
           ],
@@ -690,101 +907,58 @@ class _HomePageState extends State<HomePage> {
     }
 
     return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(20, 5, 20, 20),
+      padding: const EdgeInsets.only(bottom: 100),
       itemCount: stationProvider.stations.length,
       itemBuilder: (context, index) {
-        final station = stationProvider.stations[index];
-        final isNearest = index == 0;
-
-        String distanceText = "";
-        if (locationProvider.currentLocation != null) {
-          final distMeters = LocationService.calculateHaversineDistance(
-            locationProvider.currentLocation!.latitude,
-            locationProvider.currentLocation!.longitude,
-            station.latitude,
-            station.longitude,
-          );
-          distanceText = distMeters > 1000
-              ? "${(distMeters / 1000).toStringAsFixed(1)} km"
-              : "${distMeters.toStringAsFixed(0)} m";
-        }
+        final s = stationProvider.stations[index];
+        final distance = locationProvider.currentLocation != null
+            ? LocationService.calculateHaversineDistance(
+                locationProvider.currentLocation!.latitude,
+                locationProvider.currentLocation!.longitude,
+                s.latitude,
+                s.longitude,
+              )
+            : null;
 
         return Container(
-          margin: const EdgeInsets.only(bottom: 16),
+          margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(25),
+            borderRadius: BorderRadius.circular(20),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.04),
-                blurRadius: 15,
-                offset: const Offset(0, 8),
+                color: Colors.black.withValues(alpha: 0.03),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
               ),
             ],
-            border: isNearest
-                ? Border.all(
-                    color: const Color(0xFF0066FF).withValues(alpha: 0.3),
-                    width: 2,
-                  )
-                : null,
           ),
           child: ListTile(
             contentPadding: const EdgeInsets.all(16),
-            onTap: () => _showStationDetails(station),
             leading: Container(
-              width: 55,
-              height: 55,
+              padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: isNearest
-                    ? const Color(0xFF0066FF).withValues(alpha: 0.1)
-                    : Colors.grey[50],
-                borderRadius: BorderRadius.circular(18),
+                color: const Color(0xFF0066FF).withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(15),
               ),
-              child: Icon(
+              child: const Icon(
                 Icons.umbrella_rounded,
-                color: isNearest ? const Color(0xFF0066FF) : Colors.grey[400],
-                size: 28,
+                color: Color(0xFF0066FF),
               ),
             ),
             title: Text(
-              station.machineName,
+              s.machineName,
               style: GoogleFonts.outfit(
                 fontWeight: FontWeight.bold,
                 fontSize: 16,
-                color: const Color(0xFF1A1A1A),
               ),
             ),
             subtitle: Text(
-              station.description,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: GoogleFonts.outfit(fontSize: 13, color: Colors.grey[600]),
+              "${distance != null ? (distance < 1000 ? "${distance.toStringAsFixed(0)}m" : "${(distance / 1000).toStringAsFixed(1)}km") : ""} • ${s.availableUmbrellas} available",
+              style: GoogleFonts.outfit(color: Colors.grey[600], fontSize: 13),
             ),
-            trailing: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  distanceText,
-                  style: GoogleFonts.outfit(
-                    color: const Color(0xFF1A1A1A),
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  "${station.availableUmbrellas} left",
-                  style: GoogleFonts.outfit(
-                    color: station.availableUmbrellas > 0
-                        ? Colors.green
-                        : Colors.red,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
+            trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
+            onTap: () => _showStationDetails(s),
           ),
         );
       },
@@ -794,170 +968,142 @@ class _HomePageState extends State<HomePage> {
 
 class _StationDetailsSheet extends StatelessWidget {
   final UmbrellaLocation station;
+
   const _StationDetailsSheet({required this.station});
 
   @override
   Widget build(BuildContext context) {
-    return BackdropFilter(
-      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-      child: Container(
-        padding: const EdgeInsets.all(32),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.9),
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(40),
-            topRight: Radius.circular(40),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.1),
-              blurRadius: 40,
-              offset: const Offset(0, -10),
-            ),
-          ],
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(35),
+          topRight: Radius.circular(35),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 60,
-                height: 6,
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(10),
+      ),
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      station.machineName,
+                      style: GoogleFonts.outfit(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      station.description,
+                      style: GoogleFonts.outfit(
+                        color: Colors.grey[600],
+                        fontSize: 16,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ),
-            const SizedBox(height: 30),
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        station.machineName,
-                        style: GoogleFonts.outfit(
-                          fontSize: 26,
-                          fontWeight: FontWeight.bold,
-                          color: const Color(0xFF1A1A1A),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        station.description,
-                        style: GoogleFonts.outfit(
-                          color: Colors.grey[600],
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0066FF).withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
                 ),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0066FF).withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.share_rounded,
-                    color: Color(0xFF0066FF),
-                  ),
+                child: const Icon(
+                  Icons.navigation_rounded,
+                  color: Color(0xFF0066FF),
                 ),
-              ],
-            ),
-            const SizedBox(height: 30),
-            Row(
-              children: [
-                _buildInfoCard(
-                  label: "Available",
-                  value: "${station.availableUmbrellas}",
-                  icon: Icons.umbrella_rounded,
-                  color: Colors.blue,
+              ),
+            ],
+          ),
+          const SizedBox(height: 32),
+          Row(
+            children: [
+              Expanded(
+                child: _buildInfoCard(
+                  "Available",
+                  "${station.availableUmbrellas}",
+                  Icons.umbrella_rounded,
                 ),
-                const SizedBox(width: 15),
-                _buildInfoCard(
-                  label: "Positions",
-                  value: "${station.availableReturnSlots}",
-                  icon: Icons.move_to_inbox_rounded,
-                  color: Colors.teal,
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildInfoCard(
+                  "Total Slots",
+                  "${station.totalSlots}",
+                  Icons.grid_view_rounded,
                 ),
-              ],
-            ),
-            const SizedBox(height: 40),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context),
+              ),
+            ],
+          ),
+          const SizedBox(height: 32),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                // TODO: Rent Umbrella Flow
+              },
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF0066FF),
                 foregroundColor: Colors.white,
-                minimumSize: const Size(double.infinity, 65),
+                padding: const EdgeInsets.symmetric(vertical: 20),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(22),
+                  borderRadius: BorderRadius.circular(20),
                 ),
-                elevation: 10,
-                shadowColor: const Color(0xFF0066FF).withValues(alpha: 0.5),
+                elevation: 0,
               ),
               child: Text(
-                "Close",
+                "Rent Umbrella",
                 style: GoogleFonts.outfit(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 12),
+        ],
       ),
     );
   }
 
-  Widget _buildInfoCard({
-    required String label,
-    required String value,
-    required IconData icon,
-    required Color color,
-  }) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(25),
-          border: Border.all(color: Colors.grey[100]!),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.03),
-              blurRadius: 10,
-              offset: const Offset(0, 5),
+  Widget _buildInfoCard(String label, String value, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0066FF).withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: const Color(0xFF0066FF), size: 24),
+          const SizedBox(height: 12),
+          Text(
+            value,
+            style: GoogleFonts.outfit(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: const Color(0xFF1A1A1A),
             ),
-          ],
-        ),
-        child: Column(
-          children: [
-            Icon(icon, color: color, size: 32),
-            const SizedBox(height: 12),
-            Text(
-              value,
-              style: GoogleFonts.outfit(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-                color: const Color(0xFF1A1A1A),
-              ),
+          ),
+          Text(
+            label,
+            style: GoogleFonts.outfit(
+              fontSize: 13,
+              color: Colors.grey[600],
+              fontWeight: FontWeight.w500,
             ),
-            Text(
-              label,
-              style: GoogleFonts.outfit(
-                color: Colors.grey,
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

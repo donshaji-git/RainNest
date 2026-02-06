@@ -35,4 +35,8 @@ class GoogleAuthService {
       rethrow;
     }
   }
+
+  static Future<void> signOut() async {
+    await GoogleSignIn.instance.signOut();
+  }
 }

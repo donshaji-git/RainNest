@@ -117,19 +117,17 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
     try {
       final exists = await DatabaseService().userExists(uid);
-      if (mounted) {
-        setState(() {
-          _userExists = exists;
-          _isLoading = false;
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        _userExists = exists;
+        _isLoading = false;
+      });
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _userExists = false; // Default to registration on error
-          _isLoading = false;
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        _userExists = false; // Default to registration on error
+        _isLoading = false;
+      });
     }
   }
 }
