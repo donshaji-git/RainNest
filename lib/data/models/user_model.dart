@@ -11,6 +11,10 @@ class UserModel {
   final String email;
   final bool isEmailVerified;
   final DateTime createdAt;
+  final double walletBalance;
+  final bool isRented;
+  final String? activeRentalId;
+  final double totalFines;
 
   UserModel({
     required this.uid,
@@ -23,6 +27,10 @@ class UserModel {
     required this.email,
     required this.isEmailVerified,
     required this.createdAt,
+    this.walletBalance = 0.0,
+    this.isRented = false,
+    this.activeRentalId,
+    this.totalFines = 0.0,
   });
 
   factory UserModel.fromMap(Map<String, dynamic> data) {
@@ -37,6 +45,10 @@ class UserModel {
       email: data['email'] ?? '',
       isEmailVerified: data['isEmailVerified'] ?? false,
       createdAt: (data['createdAt'] as Timestamp).toDate(),
+      walletBalance: (data['walletBalance'] as num?)?.toDouble() ?? 0.0,
+      isRented: data['isRented'] ?? false,
+      activeRentalId: data['activeRentalId'],
+      totalFines: (data['totalFines'] as num?)?.toDouble() ?? 0.0,
     );
   }
 
@@ -52,6 +64,10 @@ class UserModel {
       'email': email,
       'isEmailVerified': isEmailVerified,
       'createdAt': Timestamp.fromDate(createdAt),
+      'walletBalance': walletBalance,
+      'isRented': isRented,
+      'activeRentalId': activeRentalId,
+      'totalFines': totalFines,
     };
   }
 }

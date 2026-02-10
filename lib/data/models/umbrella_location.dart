@@ -10,6 +10,7 @@ class UmbrellaLocation {
   final int availableUmbrellas;
   final int availableReturnSlots;
   final List<String> slotIds;
+  final Map<String, String> slotUmbrellas; // New: slotId -> umbrellaId
   final DateTime createdAt;
 
   UmbrellaLocation({
@@ -22,6 +23,7 @@ class UmbrellaLocation {
     required this.availableUmbrellas,
     required this.availableReturnSlots,
     required this.slotIds,
+    this.slotUmbrellas = const {},
     required this.createdAt,
   });
 
@@ -35,6 +37,7 @@ class UmbrellaLocation {
       'availableUmbrellas': availableUmbrellas,
       'availableReturnSlots': availableReturnSlots,
       'slotIds': slotIds,
+      'slotUmbrellas': slotUmbrellas,
       'createdAt': Timestamp.fromDate(createdAt),
     };
   }
@@ -50,6 +53,7 @@ class UmbrellaLocation {
       availableUmbrellas: map['availableUmbrellas'] ?? 0,
       availableReturnSlots: map['availableReturnSlots'] ?? 0,
       slotIds: List<String>.from(map['slotIds'] ?? []),
+      slotUmbrellas: Map<String, String>.from(map['slotUmbrellas'] ?? {}),
       createdAt: (map['createdAt'] as Timestamp).toDate(),
     );
   }

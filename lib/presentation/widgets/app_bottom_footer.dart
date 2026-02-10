@@ -50,7 +50,7 @@ class AppBottomFooter extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
               _buildNavItem(0, Icons.home_rounded, "Home"),
-              _buildNavItem(1, Icons.assignment_rounded, "Log"),
+              _buildNavItem(1, Icons.umbrella_rounded, "Log"),
 
               // Spacer for the center Scan button
               const SizedBox(width: fabSize),

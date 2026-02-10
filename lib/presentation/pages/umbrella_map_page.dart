@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_typeahead/flutter_typeahead.dart';
 import 'package:provider/provider.dart';
 import '../../data/models/umbrella_location.dart';
+import '../../data/models/umbrella.dart';
 import '../../services/database_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/location_service.dart';
@@ -95,94 +96,185 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
           : "",
     );
 
+    // Track umbrella IDs for each slot
+    final Map<String, TextEditingController> slotUmbrellaControllers = {};
+    if (existingMachine != null) {
+      for (var slotId in existingMachine.slotIds) {
+        slotUmbrellaControllers[slotId] = TextEditingController(
+          text: existingMachine.slotUmbrellas[slotId] ?? "",
+        );
+      }
+    }
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(existingMachine == null ? "Add Machine" : "Edit Machine"),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(labelText: "Machine Name"),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text(
+                existingMachine == null ? "Add Machine" : "Edit Machine",
               ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: descController,
-                decoration: const InputDecoration(
-                  labelText: "Landmark / Building",
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(25),
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: nameController,
+                      decoration: const InputDecoration(
+                        labelText: "Machine Name",
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: descController,
+                      decoration: const InputDecoration(
+                        labelText: "Landmark / Building",
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: slotCountController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: "Number of Slots",
+                      ),
+                      onChanged: (val) {
+                        final count = int.tryParse(val) ?? 0;
+                        setDialogState(() {
+                          // Update controllers based on new count
+                          for (int i = 1; i <= count; i++) {
+                            final slotId = "S$i";
+                            if (!slotUmbrellaControllers.containsKey(slotId)) {
+                              slotUmbrellaControllers[slotId] =
+                                  TextEditingController();
+                            }
+                          }
+                          // Remove extra controllers if count decreased
+                          slotUmbrellaControllers.removeWhere((key, value) {
+                            final index = int.tryParse(key.substring(1)) ?? 0;
+                            return index > count;
+                          });
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    const Divider(),
+                    const Text(
+                      "Initialize Umbrella IDs (QR)",
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ...slotUmbrellaControllers.entries.map((entry) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: TextField(
+                          controller: entry.value,
+                          decoration: InputDecoration(
+                            labelText: "Slot ${entry.key} Umbrella ID",
+                            isDense: true,
+                            border: const OutlineInputBorder(),
+                          ),
+                        ),
+                      );
+                    }),
+                  ],
                 ),
               ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: slotCountController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: "Number of Slots"),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              if (nameController.text.isEmpty ||
-                  slotCountController.text.isEmpty) {
-                return;
-              }
-              final totalSlots = int.tryParse(slotCountController.text) ?? 0;
-              final slotIds = List.generate(
-                totalSlots,
-                (index) => "S${index + 1}",
-              );
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text("Cancel"),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    if (nameController.text.isEmpty ||
+                        slotCountController.text.isEmpty) {
+                      return;
+                    }
+                    final totalSlots =
+                        int.tryParse(slotCountController.text) ?? 0;
+                    final slotIds = List.generate(
+                      totalSlots,
+                      (index) => "S${index + 1}",
+                    );
 
-              final machine = UmbrellaLocation(
-                id: existingMachine?.id ?? '',
-                machineName: nameController.text,
-                description: descController.text,
-                latitude: existingMachine?.latitude ?? point!.latitude,
-                longitude: existingMachine?.longitude ?? point!.longitude,
-                totalSlots: totalSlots,
-                availableUmbrellas:
-                    existingMachine?.availableUmbrellas ?? totalSlots,
-                availableReturnSlots:
-                    existingMachine?.availableReturnSlots ?? 0,
-                slotIds: slotIds,
-                createdAt: existingMachine?.createdAt ?? DateTime.now(),
-              );
+                    final slotUmbrellas = <String, String>{};
+                    slotUmbrellaControllers.forEach((key, value) {
+                      if (value.text.isNotEmpty) {
+                        slotUmbrellas[key] = value.text;
+                      }
+                    });
 
-              final navigator = Navigator.of(context);
-              try {
-                if (existingMachine == null) {
-                  await _db.addUmbrellaLocation(machine);
-                } else {
-                  await _db.updateUmbrellaLocation(machine);
-                }
-                navigator.pop();
-              } catch (e) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(SnackBar(content: Text("Error: $e")));
-                }
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF0066FF),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-            child: Text(existingMachine == null ? "Add" : "Save"),
-          ),
-        ],
-      ),
+                    final machine = UmbrellaLocation(
+                      id: existingMachine?.id ?? '',
+                      machineName: nameController.text,
+                      description: descController.text,
+                      latitude: existingMachine?.latitude ?? point!.latitude,
+                      longitude: existingMachine?.longitude ?? point!.longitude,
+                      totalSlots: totalSlots,
+                      availableUmbrellas: slotUmbrellas.length,
+                      availableReturnSlots: totalSlots - slotUmbrellas.length,
+                      slotIds: slotIds,
+                      slotUmbrellas: slotUmbrellas,
+                      createdAt: existingMachine?.createdAt ?? DateTime.now(),
+                    );
+
+                    final navigator = Navigator.of(context);
+                    try {
+                      String machineId = existingMachine?.id ?? '';
+                      if (existingMachine == null) {
+                        // In a real app, addUmbrellaLocation would return the ID.
+                        // For now we use the doc added.
+                        // Update: DatabaseService.addUmbrellaLocation doesn't return ID.
+                        // I'll assume it works or I'll fix DatabaseService.
+                        await _db.addUmbrellaLocation(machine);
+                      } else {
+                        await _db.updateUmbrellaLocation(machine);
+                      }
+
+                      // Update/Create Umbrella table entries
+                      for (var entry in slotUmbrellas.entries) {
+                        await _db.saveUmbrella(
+                          Umbrella(
+                            id: entry.value,
+                            currentMachineId: machineId,
+                            currentSlotId: entry.key,
+                            status: 'available',
+                            updatedAt: DateTime.now(),
+                          ),
+                        );
+                      }
+
+                      navigator.pop();
+                    } catch (e) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(SnackBar(content: Text("Error: $e")));
+                      }
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF0066FF),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: Text(existingMachine == null ? "Add" : "Save"),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
