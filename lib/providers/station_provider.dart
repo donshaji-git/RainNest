@@ -1,24 +1,24 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
-import '../data/models/umbrella_location.dart';
+import '../data/models/station.dart';
 import '../services/database_service.dart';
 import '../services/location_service.dart';
 
 class StationProvider with ChangeNotifier {
   final DatabaseService _db = DatabaseService();
-  StreamSubscription<List<UmbrellaLocation>>? _stationsSubscription;
+  StreamSubscription<List<Station>>? _stationsSubscription;
 
-  List<UmbrellaLocation> _allStations = [];
-  List<UmbrellaLocation> _nearbyStations = [];
+  List<Station> _allStations = [];
+  List<Station> _nearbyStations = [];
   bool _isLoading = true;
   String? _errorMessage;
 
-  List<UmbrellaLocation> get stations => _nearbyStations;
+  List<Station> get stations => _nearbyStations;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
-  UmbrellaLocation? get nearestStation =>
+  Station? get nearestStation =>
       _nearbyStations.isNotEmpty ? _nearbyStations.first : null;
 
   void initialize(LatLng? userLocation) {
@@ -28,7 +28,7 @@ class StationProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      _stationsSubscription = _db.getUmbrellaLocations().listen(
+      _stationsSubscription = _db.getStationsStream().listen(
         (data) {
           _allStations = data;
           _sortStations(userLocation);

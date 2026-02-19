@@ -13,9 +13,10 @@ import 'presentation/constants/admin_constants.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'providers/location_provider.dart';
-import 'providers/weather_provider.dart';
 import 'providers/station_provider.dart';
 import 'providers/map_provider.dart';
+import 'providers/user_provider.dart';
+import 'providers/rental_provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,9 +27,10 @@ void main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => LocationProvider()),
-        ChangeNotifierProvider(create: (_) => WeatherProvider()),
         ChangeNotifierProvider(create: (_) => StationProvider()),
         ChangeNotifierProvider(create: (_) => MapProvider()),
+        ChangeNotifierProvider(create: (_) => UserProvider()),
+        ChangeNotifierProvider(create: (_) => RentalProvider()),
       ],
       child: const RainNestApp(),
     ),

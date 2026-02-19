@@ -4,7 +4,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_typeahead/flutter_typeahead.dart';
 import 'package:provider/provider.dart';
-import '../../data/models/umbrella_location.dart';
+import '../../data/models/station.dart';
 import '../../data/models/umbrella.dart';
 import '../../services/database_service.dart';
 import '../../services/auth_service.dart';
@@ -13,6 +13,7 @@ import '../constants/admin_constants.dart';
 import '../../providers/location_provider.dart';
 import '../../providers/map_provider.dart';
 import 'dart:ui';
+import '../widgets/rain_nest_loader.dart';
 
 class UmbrellaMapPage extends StatefulWidget {
   const UmbrellaMapPage({super.key});
@@ -78,33 +79,26 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
     await AuthService().signOut();
   }
 
-  void _manageMachine({
-    LatLng? point,
-    UmbrellaLocation? existingMachine,
-  }) async {
+  void _manageMachine({LatLng? point, Station? existingStation}) async {
     if (!_isAdmin) return;
 
-    final nameController = TextEditingController(
-      text: existingMachine?.machineName,
-    );
+    final nameController = TextEditingController(text: existingStation?.name);
     final descController = TextEditingController(
-      text: existingMachine?.description,
+      text: existingStation?.description,
     );
     final slotCountController = TextEditingController(
-      text: existingMachine != null
-          ? existingMachine.totalSlots.toString()
+      text: existingStation != null
+          ? existingStation.totalSlots.toString()
           : "",
     );
 
-    // Track umbrella IDs for each slot
-    final Map<String, TextEditingController> slotUmbrellaControllers = {};
-    if (existingMachine != null) {
-      for (var slotId in existingMachine.slotIds) {
-        slotUmbrellaControllers[slotId] = TextEditingController(
-          text: existingMachine.slotUmbrellas[slotId] ?? "",
-        );
-      }
-    }
+    // Track umbrella IDs for initial queue
+    final queueController = TextEditingController(
+      text: existingStation?.queueOrder.join(",") ?? "",
+    );
+    final qrController = TextEditingController(
+      text: existingStation?.machineQrCode ?? "",
+    );
 
     showDialog(
       context: context,
@@ -113,7 +107,7 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
           builder: (context, setDialogState) {
             return AlertDialog(
               title: Text(
-                existingMachine == null ? "Add Machine" : "Edit Machine",
+                existingStation == null ? "Add Machine" : "Edit Machine",
               ),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(25),
@@ -130,6 +124,14 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
                     ),
                     const SizedBox(height: 12),
                     TextField(
+                      controller: qrController,
+                      decoration: const InputDecoration(
+                        labelText: "Machine QR ID",
+                        hintText: "M_001",
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
                       controller: descController,
                       decoration: const InputDecoration(
                         labelText: "Landmark / Building",
@@ -142,48 +144,15 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
                       decoration: const InputDecoration(
                         labelText: "Number of Slots",
                       ),
-                      onChanged: (val) {
-                        final count = int.tryParse(val) ?? 0;
-                        setDialogState(() {
-                          // Update controllers based on new count
-                          for (int i = 1; i <= count; i++) {
-                            final slotId = "S$i";
-                            if (!slotUmbrellaControllers.containsKey(slotId)) {
-                              slotUmbrellaControllers[slotId] =
-                                  TextEditingController();
-                            }
-                          }
-                          // Remove extra controllers if count decreased
-                          slotUmbrellaControllers.removeWhere((key, value) {
-                            final index = int.tryParse(key.substring(1)) ?? 0;
-                            return index > count;
-                          });
-                        });
-                      },
                     ),
                     const SizedBox(height: 12),
-                    const Divider(),
-                    const Text(
-                      "Initialize Umbrella IDs (QR)",
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
+                    TextField(
+                      controller: queueController,
+                      decoration: const InputDecoration(
+                        labelText: "Umbrella IDs (Comma separated, FIFO order)",
+                        hintText: "U1,U2,U3",
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    ...slotUmbrellaControllers.entries.map((entry) {
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: TextField(
-                          controller: entry.value,
-                          decoration: InputDecoration(
-                            labelText: "Slot ${entry.key} Umbrella ID",
-                            isDense: true,
-                            border: const OutlineInputBorder(),
-                          ),
-                        ),
-                      );
-                    }),
                   ],
                 ),
               ),
@@ -195,59 +164,47 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
                 ElevatedButton(
                   onPressed: () async {
                     if (nameController.text.isEmpty ||
-                        slotCountController.text.isEmpty) {
+                        slotCountController.text.isEmpty ||
+                        qrController.text.isEmpty) {
                       return;
                     }
                     final totalSlots =
                         int.tryParse(slotCountController.text) ?? 0;
-                    final slotIds = List.generate(
-                      totalSlots,
-                      (index) => "S${index + 1}",
-                    );
+                    final queue = queueController.text
+                        .split(",")
+                        .map((e) => e.trim())
+                        .where((e) => e.isNotEmpty)
+                        .toList();
 
-                    final slotUmbrellas = <String, String>{};
-                    slotUmbrellaControllers.forEach((key, value) {
-                      if (value.text.isNotEmpty) {
-                        slotUmbrellas[key] = value.text;
-                      }
-                    });
-
-                    final machine = UmbrellaLocation(
-                      id: existingMachine?.id ?? '',
-                      machineName: nameController.text,
+                    final station = Station(
+                      stationId: existingStation?.stationId ?? '',
+                      name: nameController.text,
                       description: descController.text,
-                      latitude: existingMachine?.latitude ?? point!.latitude,
-                      longitude: existingMachine?.longitude ?? point!.longitude,
+                      latitude: existingStation?.latitude ?? point!.latitude,
+                      longitude: existingStation?.longitude ?? point!.longitude,
                       totalSlots: totalSlots,
-                      availableUmbrellas: slotUmbrellas.length,
-                      availableReturnSlots: totalSlots - slotUmbrellas.length,
-                      slotIds: slotIds,
-                      slotUmbrellas: slotUmbrellas,
-                      createdAt: existingMachine?.createdAt ?? DateTime.now(),
+                      availableCount: queue.length,
+                      freeSlotsCount: totalSlots - queue.length,
+                      queueOrder: queue,
+                      machineQrCode: qrController.text,
                     );
 
                     final navigator = Navigator.of(context);
                     try {
-                      String machineId = existingMachine?.id ?? '';
-                      if (existingMachine == null) {
-                        // In a real app, addUmbrellaLocation would return the ID.
-                        // For now we use the doc added.
-                        // Update: DatabaseService.addUmbrellaLocation doesn't return ID.
-                        // I'll assume it works or I'll fix DatabaseService.
-                        await _db.addUmbrellaLocation(machine);
+                      if (existingStation == null) {
+                        await _db.addStation(station);
                       } else {
-                        await _db.updateUmbrellaLocation(machine);
+                        await _db.updateStation(station);
                       }
 
                       // Update/Create Umbrella table entries
-                      for (var entry in slotUmbrellas.entries) {
+                      for (var umbrellaId in queue) {
                         await _db.saveUmbrella(
                           Umbrella(
-                            id: entry.value,
-                            currentMachineId: machineId,
-                            currentSlotId: entry.key,
+                            umbrellaId: umbrellaId,
+                            stationId: station.stationId,
                             status: 'available',
-                            updatedAt: DateTime.now(),
+                            createdAt: DateTime.now(),
                           ),
                         );
                       }
@@ -268,7 +225,7 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: Text(existingMachine == null ? "Add" : "Save"),
+                  child: Text(existingStation == null ? "Add" : "Save"),
                 ),
               ],
             );
@@ -278,7 +235,7 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
     );
   }
 
-  void _showLocationDetails(UmbrellaLocation loc) {
+  void _showLocationDetails(Station station) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -286,7 +243,7 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
         filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
         child: Container(
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.9),
+            color: Colors.white.withAlpha(230),
             borderRadius: const BorderRadius.only(
               topLeft: Radius.circular(35),
               topRight: Radius.circular(35),
@@ -305,14 +262,14 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          loc.machineName,
+                          station.name,
                           style: const TextStyle(
                             fontSize: 24,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
                         Text(
-                          loc.description,
+                          station.description,
                           style: TextStyle(
                             color: Colors.grey[600],
                             fontSize: 16,
@@ -331,14 +288,14 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
                           ),
                           onPressed: () {
                             Navigator.pop(context);
-                            _manageMachine(existingMachine: loc);
+                            _manageMachine(existingStation: station);
                           },
                         ),
                         IconButton(
                           icon: const Icon(Icons.delete, color: Colors.red),
                           onPressed: () {
                             Navigator.pop(context);
-                            _deleteLocation(loc);
+                            _deleteLocation(station);
                           },
                         ),
                       ],
@@ -371,7 +328,7 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
                     ),
                     const SizedBox(width: 15),
                     Text(
-                      "Total Slots: ${loc.totalSlots}",
+                      "Total Slots: ${station.totalSlots}",
                       style: const TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
@@ -386,7 +343,7 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
                 height: 45,
                 child: ListView.builder(
                   scrollDirection: Axis.horizontal,
-                  itemCount: loc.slotIds.length,
+                  itemCount: station.queueOrder.length,
                   itemBuilder: (context, index) => Container(
                     margin: const EdgeInsets.only(right: 10),
                     padding: const EdgeInsets.symmetric(
@@ -400,7 +357,7 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
                     ),
                     child: Center(
                       child: Text(
-                        loc.slotIds[index],
+                        station.queueOrder[index],
                         style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 13,
@@ -417,14 +374,12 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
     );
   }
 
-  void _deleteLocation(UmbrellaLocation location) async {
+  void _deleteLocation(Station station) async {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text("Delete Machine"),
-        content: Text(
-          "Are you sure you want to delete '${location.machineName}'?",
-        ),
+        content: Text("Are you sure you want to delete '${station.name}'?"),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -432,7 +387,7 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
           ),
           ElevatedButton(
             onPressed: () async {
-              await _db.deleteUmbrellaLocation(location.id);
+              await _db.deleteStation(station.stationId);
               if (context.mounted) Navigator.pop(context);
             },
             style: ElevatedButton.styleFrom(
@@ -647,17 +602,15 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
   }
 
   Widget _buildMap(LocationProvider locationProvider, MapProvider mapProvider) {
-    return StreamBuilder<List<UmbrellaLocation>>(
-      stream: _db.getUmbrellaLocations(),
+    return StreamBuilder<List<Station>>(
+      stream: _db.getStationsStream(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Center(child: Text('Stream Error: ${snapshot.error}'));
         }
 
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
-            child: CircularProgressIndicator(color: Color(0xFF0066FF)),
-          );
+          return const Center(child: RainNestLoader(color: Color(0xFF0066FF)));
         }
 
         final locations = snapshot.data ?? [];
@@ -734,7 +687,7 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black26,
+                              color: Colors.black.withValues(alpha: 0.26),
                               blurRadius: 8,
                               offset: const Offset(0, 3),
                             ),

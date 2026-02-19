@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import '../../services/location_service.dart';
-import '../../data/models/umbrella_location.dart';
-import '../../data/models/weather_models.dart';
+import '../../data/models/station.dart';
 
 class HomeHeader extends StatelessWidget {
   final String username;
@@ -76,177 +75,10 @@ class HomeSearch extends StatelessWidget {
   }
 }
 
-class WeatherAlertCard extends StatefulWidget {
-  final WeatherData? weather;
-  final VoidCallback onViewMap;
-
-  const WeatherAlertCard({
-    super.key,
-    required this.weather,
-    required this.onViewMap,
-  });
-
-  @override
-  State<WeatherAlertCard> createState() => _WeatherAlertCardState();
-}
-
-class _WeatherAlertCardState extends State<WeatherAlertCard>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _fadeAnimation;
-  late Animation<Offset> _slideAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 800),
-    );
-    _fadeAnimation = CurvedAnimation(parent: _controller, curve: Curves.easeIn);
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, 0.2),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
-    _controller.forward();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  IconData _getWeatherIcon(String condition) {
-    switch (condition.toLowerCase()) {
-      case 'rain':
-        return Icons.umbrella_rounded;
-      case 'clouds':
-        return Icons.cloud_rounded;
-      case 'clear':
-        return Icons.wb_sunny_rounded;
-      case 'wind':
-        return Icons.air_rounded;
-      default:
-        return Icons.wb_cloudy_rounded;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final bool hasAlert = widget.weather?.hasRainAlert ?? false;
-
-    return FadeTransition(
-      opacity: _fadeAnimation,
-      child: SlideTransition(
-        position: _slideAnimation,
-        child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: const Color(0xFF0066FF),
-            borderRadius: BorderRadius.circular(30),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF0066FF).withValues(alpha: 0.3),
-                blurRadius: 20,
-                offset: const Offset(0, 10),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  if (hasAlert)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        '🌧️ RAIN ALERT',
-                        style: GoogleFonts.inter(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    )
-                  else
-                    const SizedBox.shrink(),
-                  Column(
-                    children: [
-                      Icon(
-                        _getWeatherIcon(widget.weather?.condition ?? ''),
-                        color: Colors.white,
-                        size: 48,
-                      ),
-                      Text(
-                        '${widget.weather?.temperature.toStringAsFixed(0) ?? "--"}°C',
-                        style: GoogleFonts.inter(
-                          color: Colors.white,
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Text(
-                widget.weather?.condition ?? 'Weather',
-                style: GoogleFonts.inter(
-                  color: Colors.white,
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                hasAlert
-                    ? 'Rain expected soon. Grab an umbrella!'
-                    : 'Weather is looking good today.',
-                style: GoogleFonts.inter(
-                  color: Colors.white.withValues(alpha: 0.9),
-                  fontSize: 14,
-                ),
-              ),
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: widget.onViewMap,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: const Color(0xFF0066FF),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  minimumSize: const Size(double.infinity, 50),
-                ),
-                child: Text(
-                  'View Map',
-                  style: GoogleFonts.inter(fontWeight: FontWeight.bold),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class NearbyNestsSection extends StatelessWidget {
-  final List<UmbrellaLocation> machines;
+  final List<Station> machines;
   final LatLng? userLocation;
-  final Function(UmbrellaLocation) onKioskTapped;
+  final Function(Station) onKioskTapped;
 
   const NearbyNestsSection({
     super.key,
@@ -312,7 +144,7 @@ class NearbyNestsSection extends StatelessWidget {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Text(
-                              loc.machineName,
+                              loc.name,
                               style: GoogleFonts.inter(
                                 fontWeight: FontWeight.bold,
                               ),

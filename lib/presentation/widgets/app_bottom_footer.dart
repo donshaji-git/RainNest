@@ -10,20 +10,16 @@ import 'package:flutter/material.dart';
 class AppBottomFooter extends StatelessWidget {
   final int currentIndex;
   final Function(int) onItemSelected;
-  final VoidCallback onScanPressed;
 
   const AppBottomFooter({
     super.key,
     required this.currentIndex,
     required this.onItemSelected,
-    required this.onScanPressed,
   });
 
   @override
   Widget build(BuildContext context) {
     const double barHeight = 70.0;
-    const double fabSize = 64.0;
-    const double fabOverlap = 20.0; // How much the FAB overlaps the top
 
     return Stack(
       clipBehavior: Clip.none,
@@ -50,40 +46,37 @@ class AppBottomFooter extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
               _buildNavItem(0, Icons.home_rounded, "Home"),
-              _buildNavItem(1, Icons.umbrella_rounded, "Log"),
-
-              // Spacer for the center Scan button
-              const SizedBox(width: fabSize),
-
-              _buildNavItem(2, Icons.account_balance_wallet_rounded, "Wallet"),
-              _buildNavItem(3, Icons.person_rounded, "Profile"),
+              _buildNavItem(1, Icons.umbrella_rounded, "Umbrella"),
+              const SizedBox(width: 48), // Gap for the central FAB
+              _buildNavItem(3, Icons.account_balance_wallet_rounded, "Wallet"),
+              _buildNavItem(4, Icons.person_rounded, "Profile"),
             ],
           ),
         ),
-
-        // Floating Scan Button
+        // Central Floating Scan Button
         Positioned(
-          top: -fabOverlap,
+          top: -25,
           child: GestureDetector(
-            onTap: onScanPressed,
+            onTap: () => onItemSelected(2),
             child: Container(
-              width: fabSize,
-              height: fabSize,
+              width: 60,
+              height: 60,
               decoration: BoxDecoration(
                 color: const Color(0xFF0066FF),
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFF0066FF).withValues(alpha: 0.4),
+                    color: const Color(0xFF0066FF).withValues(alpha: 0.3),
                     blurRadius: 15,
                     offset: const Offset(0, 8),
                   ),
                 ],
+                border: Border.all(color: Colors.white, width: 4),
               ),
               child: const Icon(
                 Icons.qr_code_scanner_rounded,
                 color: Colors.white,
-                size: 32,
+                size: 30,
               ),
             ),
           ),
@@ -93,8 +86,6 @@ class AppBottomFooter extends StatelessWidget {
   }
 
   Widget _buildNavItem(int index, IconData icon, String label) {
-    // Current Index 2 and 3 correspond to Wallet and Profile in the UI mapping
-    // but the onItemSelected expects 0, 1, 2, 3.
     final isActive = currentIndex == index;
     final color = isActive ? const Color(0xFF0066FF) : Colors.grey[400];
 
@@ -106,13 +97,13 @@ class AppBottomFooter extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, color: color, size: 26),
+            Icon(icon, color: color, size: 24),
             const SizedBox(height: 4),
             Text(
               label,
               style: TextStyle(
                 color: color,
-                fontSize: 12,
+                fontSize: 11,
                 fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
               ),
             ),

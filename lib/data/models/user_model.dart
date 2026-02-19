@@ -2,72 +2,66 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 class UserModel {
   final String uid;
-  final String phoneNumber;
-  final String countryCode;
   final String name;
-  final String surname;
+  final String email;
+  final String phoneNumber;
+  final double walletBalance;
   final String address;
   final String pinCode;
-  final String email;
-  final bool isEmailVerified;
+  final bool hasSecurityDeposit;
+  final DateTime? securityDepositDate;
+  final List<String> activeRentalIds; // Support multiple rentals
   final DateTime createdAt;
-  final double walletBalance;
-  final bool isRented;
-  final String? activeRentalId;
-  final double totalFines;
 
   UserModel({
     required this.uid,
-    required this.phoneNumber,
-    required this.countryCode,
     required this.name,
-    required this.surname,
-    required this.address,
-    required this.pinCode,
     required this.email,
-    required this.isEmailVerified,
-    required this.createdAt,
+    required this.phoneNumber,
+    this.address = '',
+    this.pinCode = '',
     this.walletBalance = 0.0,
-    this.isRented = false,
-    this.activeRentalId,
-    this.totalFines = 0.0,
+    this.hasSecurityDeposit = false,
+    this.securityDepositDate,
+    this.activeRentalIds = const [],
+    required this.createdAt,
   });
 
   factory UserModel.fromMap(Map<String, dynamic> data) {
     return UserModel(
       uid: data['uid'] ?? '',
-      phoneNumber: data['phoneNumber'] ?? '',
-      countryCode: data['countryCode'] ?? '',
       name: data['name'] ?? '',
-      surname: data['surname'] ?? '',
+      email: data['email'] ?? '',
+      phoneNumber: data['phoneNumber'] ?? '',
+      walletBalance: (data['walletBalance'] as num?)?.toDouble() ?? 0.0,
+      hasSecurityDeposit: data['hasSecurityDeposit'] ?? false,
+      securityDepositDate: (data['securityDepositDate'] is Timestamp)
+          ? (data['securityDepositDate'] as Timestamp).toDate()
+          : null,
       address: data['address'] ?? '',
       pinCode: data['pinCode'] ?? '',
-      email: data['email'] ?? '',
-      isEmailVerified: data['isEmailVerified'] ?? false,
-      createdAt: (data['createdAt'] as Timestamp).toDate(),
-      walletBalance: (data['walletBalance'] as num?)?.toDouble() ?? 0.0,
-      isRented: data['isRented'] ?? false,
-      activeRentalId: data['activeRentalId'],
-      totalFines: (data['totalFines'] as num?)?.toDouble() ?? 0.0,
+      activeRentalIds: List<String>.from(data['activeRentalIds'] ?? []),
+      createdAt: (data['createdAt'] is Timestamp)
+          ? (data['createdAt'] as Timestamp).toDate()
+          : DateTime.now(),
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
       'uid': uid,
-      'phoneNumber': phoneNumber,
-      'countryCode': countryCode,
       'name': name,
-      'surname': surname,
+      'email': email,
+      'phoneNumber': phoneNumber,
+      'walletBalance': walletBalance,
+      'hasSecurityDeposit': hasSecurityDeposit,
+      'securityDepositDate': securityDepositDate != null
+          ? Timestamp.fromDate(securityDepositDate!)
+          : null,
       'address': address,
       'pinCode': pinCode,
-      'email': email,
-      'isEmailVerified': isEmailVerified,
+      'activeRentalIds': activeRentalIds,
       'createdAt': Timestamp.fromDate(createdAt),
-      'walletBalance': walletBalance,
-      'isRented': isRented,
-      'activeRentalId': activeRentalId,
-      'totalFines': totalFines,
     };
   }
 }

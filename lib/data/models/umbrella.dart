@@ -1,41 +1,35 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class Umbrella {
-  final String id; // QR Code value
-  final String? currentMachineId;
-  final String? currentSlotId;
-  final String status; // 'available', 'rented', 'damaged'
-  final String? lastUserId;
-  final DateTime updatedAt;
+  final String umbrellaId; // Resistance value from NodeMCU
+  final String? stationId;
+  final String status; // 'available', 'rented', 'maintenance'
+  final DateTime createdAt;
 
   Umbrella({
-    required this.id,
-    this.currentMachineId,
-    this.currentSlotId,
+    required this.umbrellaId,
+    this.stationId,
     required this.status,
-    this.lastUserId,
-    required this.updatedAt,
+    required this.createdAt,
   });
 
   Map<String, dynamic> toMap() {
     return {
-      'id': id,
-      'currentMachineId': currentMachineId,
-      'currentSlotId': currentSlotId,
+      'umbrellaId': umbrellaId,
+      'stationId': stationId,
       'status': status,
-      'lastUserId': lastUserId,
-      'updatedAt': Timestamp.fromDate(updatedAt),
+      'createdAt': Timestamp.fromDate(createdAt),
     };
   }
 
-  factory Umbrella.fromMap(Map<String, dynamic> map) {
+  factory Umbrella.fromMap(Map<String, dynamic> data) {
     return Umbrella(
-      id: map['id'] ?? '',
-      currentMachineId: map['currentMachineId'],
-      currentSlotId: map['currentSlotId'],
-      status: map['status'] ?? 'available',
-      lastUserId: map['lastUserId'],
-      updatedAt: (map['updatedAt'] as Timestamp).toDate(),
+      umbrellaId: data['umbrellaId'] ?? '',
+      stationId: data['stationId'],
+      status: data['status'] ?? 'available',
+      createdAt: (data['createdAt'] is Timestamp)
+          ? (data['createdAt'] as Timestamp).toDate()
+          : DateTime.now(),
     );
   }
 }

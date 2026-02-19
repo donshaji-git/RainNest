@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:country_code_picker/country_code_picker.dart';
 import '../../data/models/user_model.dart';
 import '../../services/database_service.dart';
+import '../widgets/rain_nest_loader.dart';
 import 'home_page.dart';
 
 class LoginDetailsPage extends StatefulWidget {
@@ -18,9 +19,9 @@ class _LoginDetailsPageState extends State<LoginDetailsPage> {
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _addressController = TextEditingController();
   final TextEditingController _pinController = TextEditingController();
-  String _selectedCountryCode = '+91';
 
   final DatabaseService _db = DatabaseService();
+  String _selectedCountryCode = '+91';
   bool _isLoading = false;
   bool _isFormValid = false;
 
@@ -67,16 +68,15 @@ class _LoginDetailsPageState extends State<LoginDetailsPage> {
       try {
         final user = FirebaseAuth.instance.currentUser;
         if (user != null) {
+          final fullPhoneNumber =
+              "$_selectedCountryCode${_phoneController.text.trim()}";
           UserModel userModel = UserModel(
             uid: user.uid,
-            phoneNumber: _phoneController.text.trim(),
-            countryCode: _selectedCountryCode,
+            phoneNumber: fullPhoneNumber,
             name: _nameController.text.trim(),
-            surname: '', // Removed from UI as requested
             address: _addressController.text.trim(),
             pinCode: _pinController.text.trim(),
             email: user.email ?? '',
-            isEmailVerified: user.emailVerified,
             createdAt: DateTime.now(),
           );
           await _db.saveUser(userModel);
@@ -311,13 +311,9 @@ class _LoginDetailsPageState extends State<LoginDetailsPage> {
                                 ),
                               ),
                               child: _isLoading
-                                  ? const SizedBox(
-                                      height: 24,
-                                      width: 24,
-                                      child: CircularProgressIndicator(
-                                        color: Colors.white,
-                                        strokeWidth: 2,
-                                      ),
+                                  ? const RainNestLoader(
+                                      size: 24,
+                                      color: Colors.white,
                                     )
                                   : const Text(
                                       "Submit Details",

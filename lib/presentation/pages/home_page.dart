@@ -6,17 +6,22 @@ import 'package:flutter_typeahead/flutter_typeahead.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../providers/location_provider.dart';
-import '../../providers/weather_provider.dart';
 import '../../providers/station_provider.dart';
 import '../../services/location_service.dart';
-import '../../data/models/umbrella_location.dart';
-import '../../services/weather_service.dart';
+import '../../services/database_service.dart';
+import '../../data/models/station.dart';
 import '../widgets/app_bottom_footer.dart';
+import '../widgets/rain_nest_loader.dart';
+import '../../providers/user_provider.dart';
 
 import 'dart:ui';
 import '../../providers/map_provider.dart';
 import 'profile_page.dart';
+import 'wallet_page.dart';
 import 'scanner_page.dart';
+import '../../providers/rental_provider.dart';
+import 'umbrella_page.dart';
+import '../../data/models/user_model.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -28,7 +33,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   final TextEditingController _searchController = TextEditingController();
   List<LatLng> _routePoints = [];
-  UmbrellaLocation? _selectedStation;
+  Station? _selectedStation;
   bool _firstLocationFixed = false;
   bool _showRecommendation = true;
   int _currentIndex = 0;
@@ -45,7 +50,6 @@ class _HomePageState extends State<HomePage> {
   void _onLocationChanged() {
     if (!mounted) return;
     final locationProvider = context.read<LocationProvider>();
-    final weatherProvider = context.read<WeatherProvider>();
     final stationProvider = context.read<StationProvider>();
     final mapProvider = context.read<MapProvider>();
 
@@ -60,8 +64,7 @@ class _HomePageState extends State<HomePage> {
         mapProvider.centerOnUser(loc);
         _firstLocationFixed = true;
 
-        // Fetch weather and initial directions
-        weatherProvider.fetchWeather(loc);
+        // Fetch initial direction
         if (stationProvider.nearestStation != null) {
           _fetchDirections(stationProvider.nearestStation!);
         }
@@ -79,7 +82,6 @@ class _HomePageState extends State<HomePage> {
   void _initialize() async {
     _locationProvider = context.read<LocationProvider>();
     final stationProvider = context.read<StationProvider>();
-    final weatherProvider = context.read<WeatherProvider>();
 
     // 1. Start station listener immediately (with null location initially)
     stationProvider.initialize(_locationProvider?.currentLocation);
@@ -94,13 +96,11 @@ class _HomePageState extends State<HomePage> {
     if (_locationProvider?.hasLocation ?? false) {
       final loc = _locationProvider!.currentLocation!;
       stationProvider.updateLocation(loc);
-      weatherProvider.fetchWeather(loc);
 
       if (!_firstLocationFixed) {
-        if (context.mounted) {
-          context.read<MapProvider>().centerOnUser(loc);
-          _firstLocationFixed = true;
-        }
+        if (!mounted) return;
+        context.read<MapProvider>().centerOnUser(loc);
+        _firstLocationFixed = true;
       }
     }
   }
@@ -118,17 +118,26 @@ class _HomePageState extends State<HomePage> {
     context.read<LocationProvider>().initialize();
   }
 
-  void _showStationDetails(UmbrellaLocation station) {
+  void _showStationDetails(Station station) {
     _fetchDirections(station);
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => _StationDetailsSheet(station: station),
+      builder: (context) => _StationDetailsSheet(
+        station: station,
+        onRouteRequested: () => _fetchDirections(station),
+        onRentRequested: () {
+          context.read<RentalProvider>().setTargetStation(station);
+          setState(() {
+            _currentIndex = 2; // Switch to Scanner Tab
+          });
+        },
+      ),
     );
   }
 
-  void _fetchDirections(UmbrellaLocation station) async {
+  void _fetchDirections(Station station) async {
     final userLoc = context.read<LocationProvider>().currentLocation;
     if (userLoc == null) return;
 
@@ -209,8 +218,9 @@ class _HomePageState extends State<HomePage> {
         index: _currentIndex,
         children: [
           _buildHomeBody(),
-          const Center(child: Text("Log Page (Coming Soon)")),
-          const Center(child: Text("Wallet Page (Coming Soon)")),
+          const UmbrellaPage(),
+          const ScannerPage(),
+          const WalletPage(),
           const ProfilePage(),
         ],
       ),
@@ -221,19 +231,13 @@ class _HomePageState extends State<HomePage> {
             _currentIndex = i;
           });
         },
-        onScanPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const ScannerPage()),
-          );
-        },
       ),
     );
   }
 
   Widget _buildHomeBody() {
     final locationProvider = context.watch<LocationProvider>();
-    final weatherProvider = context.watch<WeatherProvider>();
+
     final stationProvider = context.watch<StationProvider>();
     final mapProvider = context.watch<MapProvider>();
 
@@ -256,7 +260,7 @@ class _HomePageState extends State<HomePage> {
           child: Column(
             children: [
               // 1. Premium Header
-              _buildHeader(weatherProvider, locationProvider, mapProvider),
+              _buildHeader(locationProvider, mapProvider),
 
               // 2. Map Section with Floating Card
               Expanded(
@@ -351,10 +355,19 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildHeader(
-    WeatherProvider weatherProvider,
     LocationProvider locationProvider,
     MapProvider mapProvider,
   ) {
+    String greeting = "Good Day!";
+    final hour = DateTime.now().hour;
+    if (hour < 12) {
+      greeting = "Good Morning!";
+    } else if (hour < 17) {
+      greeting = "Good Afternoon!";
+    } else {
+      greeting = "Good Evening!";
+    }
+
     return Container(
       padding: const EdgeInsets.fromLTRB(24, 10, 24, 20),
       child: Column(
@@ -366,7 +379,7 @@ class _HomePageState extends State<HomePage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      weatherProvider.greeting,
+                      greeting,
                       style: GoogleFonts.outfit(
                         fontSize: 28,
                         fontWeight: FontWeight.bold,
@@ -397,101 +410,8 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
               ),
-              if (weatherProvider.isLoading)
-                const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Color(0xFF0066FF),
-                  ),
-                ),
-              if (weatherProvider.hasWeather && !weatherProvider.isLoading)
-                GestureDetector(
-                  onTap: () {
-                    // Could show weather details dialog
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 10,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.05),
-                          blurRadius: 10,
-                          offset: const Offset(0, 5),
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              '${weatherProvider.currentWeather!.temperature.toStringAsFixed(0)}°',
-                              style: GoogleFonts.outfit(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                                color: const Color(0xFF1A1A1A),
-                              ),
-                            ),
-                            Text(
-                              weatherProvider.currentWeather!.condition,
-                              style: GoogleFonts.outfit(
-                                fontSize: 10,
-                                color: Colors.grey[600],
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(width: 10),
-                        Text(
-                          WeatherService.getWeatherIcon(
-                            weatherProvider.currentWeather!.condition,
-                          ),
-                          style: const TextStyle(fontSize: 28),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              if (!weatherProvider.hasWeather &&
-                  !weatherProvider.isLoading &&
-                  weatherProvider.errorMessage != null)
-                const Icon(Icons.cloud_off_rounded, color: Colors.grey),
             ],
           ),
-          if (weatherProvider.hasWeather && !weatherProvider.isLoading) ...[
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                _buildWeatherDetailItem(
-                  Icons.water_drop_rounded,
-                  '${weatherProvider.currentWeather!.humidity}%',
-                  'Humidity',
-                ),
-                const SizedBox(width: 15),
-                _buildWeatherDetailItem(
-                  Icons.air_rounded,
-                  '${weatherProvider.currentWeather!.windSpeed.toStringAsFixed(1)} m/s',
-                  'Wind',
-                ),
-                const SizedBox(width: 15),
-                _buildWeatherDetailItem(
-                  Icons.thermostat_rounded,
-                  '${weatherProvider.currentWeather!.feelsLike.toStringAsFixed(0)}°',
-                  'Feels like',
-                ),
-              ],
-            ),
-          ],
           const SizedBox(height: 20),
           // Search Bar
           TypeAheadField<SearchResult>(
@@ -554,9 +474,7 @@ class _HomePageState extends State<HomePage> {
     if (locationProvider.isLoading && !locationProvider.hasLocation) {
       return Container(
         color: Colors.grey[100],
-        child: const Center(
-          child: CircularProgressIndicator(color: Color(0xFF0066FF)),
-        ),
+        child: const Center(child: RainNestLoader()),
       );
     }
 
@@ -633,7 +551,7 @@ class _HomePageState extends State<HomePage> {
           ),
         MarkerLayer(
           markers: [
-            // User Location Marker (Premium Pulse effect)
+            // User Location Marker
             if (locationProvider.currentLocation != null)
               Marker(
                 point: locationProvider.currentLocation!,
@@ -679,8 +597,9 @@ class _HomePageState extends State<HomePage> {
               ),
             // Station Markers
             ...stationProvider.stations.map((s) {
-              final isNearest = stationProvider.nearestStation?.id == s.id;
-              final isSelected = _selectedStation?.id == s.id;
+              final isNearest =
+                  stationProvider.nearestStation?.stationId == s.stationId;
+              final isSelected = _selectedStation?.stationId == s.stationId;
 
               return Marker(
                 point: LatLng(s.latitude, s.longitude),
@@ -723,7 +642,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildRecommendationCard(
-    UmbrellaLocation station,
+    Station station,
     LocationProvider locationProvider,
   ) {
     String distanceText = "";
@@ -793,7 +712,7 @@ class _HomePageState extends State<HomePage> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          station.machineName,
+                          station.name,
                           style: GoogleFonts.outfit(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
@@ -801,7 +720,7 @@ class _HomePageState extends State<HomePage> {
                           ),
                         ),
                         Text(
-                          "$distanceText away • ${station.availableUmbrellas} Available",
+                          "$distanceText away • ${station.availableCount} Available",
                           style: GoogleFonts.outfit(
                             color: Colors.grey[600],
                             fontSize: 13,
@@ -844,50 +763,12 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildWeatherDetailItem(IconData icon, String value, String label) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: Colors.grey.withValues(alpha: 0.1)),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 14, color: const Color(0xFF0066FF)),
-          const SizedBox(width: 6),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                value,
-                style: GoogleFonts.outfit(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: const Color(0xFF1A1A1A),
-                ),
-              ),
-              Text(
-                label,
-                style: GoogleFonts.outfit(
-                  fontSize: 9,
-                  color: Colors.grey[600],
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildStationList(
     StationProvider stationProvider,
     LocationProvider locationProvider,
   ) {
     if (stationProvider.isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(child: RainNestLoader());
     }
 
     if (stationProvider.stations.isEmpty) {
@@ -947,14 +828,14 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
             title: Text(
-              s.machineName,
+              s.name,
               style: GoogleFonts.outfit(
                 fontWeight: FontWeight.bold,
                 fontSize: 16,
               ),
             ),
             subtitle: Text(
-              "${distance != null ? (distance < 1000 ? "${distance.toStringAsFixed(0)}m" : "${(distance / 1000).toStringAsFixed(1)}km") : ""} • ${s.availableUmbrellas} available",
+              "${distance != null ? (distance < 1000 ? "${distance.toStringAsFixed(0)}m" : "${(distance / 1000).toStringAsFixed(1)}km") : ""} • ${s.availableCount} available",
               style: GoogleFonts.outfit(color: Colors.grey[600], fontSize: 13),
             ),
             trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
@@ -967,12 +848,25 @@ class _HomePageState extends State<HomePage> {
 }
 
 class _StationDetailsSheet extends StatelessWidget {
-  final UmbrellaLocation station;
+  final Station station;
+  final VoidCallback? onRouteRequested;
+  final VoidCallback? onRentRequested;
 
-  const _StationDetailsSheet({required this.station});
+  const _StationDetailsSheet({
+    required this.station,
+    this.onRouteRequested,
+    this.onRentRequested,
+  });
 
   @override
   Widget build(BuildContext context) {
+    // Listen to provider to get real-time updates for this specific station
+    final stationProvider = context.watch<StationProvider>();
+    final liveStation = stationProvider.stations.firstWhere(
+      (s) => s.stationId == station.stationId,
+      orElse: () => station,
+    );
+
     return Container(
       decoration: const BoxDecoration(
         color: Colors.white,
@@ -994,14 +888,14 @@ class _StationDetailsSheet extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      station.machineName,
+                      liveStation.name,
                       style: GoogleFonts.outfit(
                         fontSize: 24,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
                     Text(
-                      station.description,
+                      liveStation.description,
                       style: GoogleFonts.outfit(
                         color: Colors.grey[600],
                         fontSize: 16,
@@ -1010,64 +904,91 @@ class _StationDetailsSheet extends StatelessWidget {
                   ],
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0066FF).withValues(alpha: 0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.navigation_rounded,
-                  color: Color(0xFF0066FF),
+              InkWell(
+                onTap: () {
+                  Navigator.pop(context); // Close sheet
+                  if (onRouteRequested != null) {
+                    onRouteRequested!();
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0066FF).withValues(alpha: 0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.navigation_rounded,
+                    color: Color(0xFF0066FF),
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: 24),
           Row(
             children: [
               Expanded(
                 child: _buildInfoCard(
                   "Available",
-                  "${station.availableUmbrellas}",
+                  "${liveStation.availableCount}",
                   Icons.umbrella_rounded,
                 ),
               ),
               const SizedBox(width: 16),
               Expanded(
                 child: _buildInfoCard(
-                  "Total Slots",
-                  "${station.totalSlots}",
-                  Icons.grid_view_rounded,
+                  "Return Slots",
+                  "${liveStation.freeSlotsCount}",
+                  Icons.move_to_inbox_rounded,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 32),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                // TODO: Rent Umbrella Flow
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF0066FF),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 20),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                elevation: 0,
-              ),
-              child: Text(
-                "Rent Umbrella",
-                style: GoogleFonts.outfit(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+          const SizedBox(height: 24),
+          const SizedBox(height: 16),
+          // Simple Rent Button instead of Grid
+          StreamBuilder<UserModel?>(
+            stream: DatabaseService().getUserStream(
+              context.read<UserProvider>().user?.uid ?? '',
             ),
+            builder: (context, userSnapshot) {
+              final user = userSnapshot.data;
+
+              return SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: liveStation.availableCount > 0
+                      ? () {
+                          Navigator.pop(context); // Close sheet
+                          if (onRentRequested != null) {
+                            onRentRequested!();
+                          }
+                        }
+                      : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF0066FF),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    elevation: 0,
+                  ),
+                  child: Text(
+                    liveStation.availableCount > 0
+                        ? (user != null && user.walletBalance >= 110.0
+                              ? "Rent Umbrella (₹10)"
+                              : "Pay & Rent (₹${(110.0 - (user?.walletBalance ?? 0.0)).clamp(10.0, 110.0).toStringAsFixed(0)})")
+                        : "No Umbrellas Available",
+                    style: GoogleFonts.outfit(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
           const SizedBox(height: 12),
         ],
