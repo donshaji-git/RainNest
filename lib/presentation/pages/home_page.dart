@@ -24,7 +24,8 @@ import 'umbrella_page.dart';
 import '../../data/models/user_model.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  final int initialIndex;
+  const HomePage({super.key, this.initialIndex = 0});
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -42,6 +43,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    _currentIndex = widget.initialIndex;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initialize();
     });
@@ -977,9 +979,23 @@ class _StationDetailsSheet extends StatelessWidget {
                   ),
                   child: Text(
                     liveStation.availableCount > 0
-                        ? (user != null && user.walletBalance >= 110.0
-                              ? "Rent Umbrella (₹10)"
-                              : "Pay & Rent (₹${(110.0 - (user?.walletBalance ?? 0.0)).clamp(10.0, 110.0).toStringAsFixed(0)})")
+                        ? (() {
+                            if (user == null) return "Pay ₹110 & Rent";
+                            double topup = (100.0 - user.securityDeposit).clamp(
+                              0.0,
+                              100.0,
+                            );
+                            double total = topup + 10.0;
+                            if (user.walletBalance >= total) {
+                              return "Rent Umbrella (₹10)";
+                            } else {
+                              double toPay = (total - user.walletBalance).clamp(
+                                10.0,
+                                110.0,
+                              );
+                              return "Pay & Rent (₹${toPay.toStringAsFixed(0)})";
+                            }
+                          })()
                         : "No Umbrellas Available",
                     style: GoogleFonts.outfit(
                       fontSize: 18,

@@ -36,9 +36,7 @@ class _WalletPageState extends State<WalletPage> {
               children: [
                 _buildHeader(),
                 const SizedBox(height: 20),
-                _buildBalanceCard(context, liveUser.walletBalance),
-                const SizedBox(height: 15),
-                _buildSecurityDepositCard(liveUser),
+                _buildBalanceCard(context, liveUser),
                 const SizedBox(height: 15),
                 Expanded(
                   child: _buildTransactionHistory(context, liveUser.uid),
@@ -94,7 +92,33 @@ class _WalletPageState extends State<WalletPage> {
     );
   }
 
-  Widget _buildBalanceCard(BuildContext context, double balance) {
+  Widget _buildBalanceCard(BuildContext context, UserModel user) {
+    final totalBalance =
+        user.walletBalance + user.securityDeposit - user.fineAccumulated;
+
+    String redeemButtonText = "Redeem Balance";
+    VoidCallback? onRedeemPressed;
+    bool isPending = false;
+
+    if (user.redemptionStatus == 'pending') {
+      isPending = true;
+      if (user.redemptionRequestedAt != null) {
+        final now = DateTime.now();
+        final diff = now.difference(user.redemptionRequestedAt!);
+        final remainingDays = 5 - diff.inDays;
+        redeemButtonText = remainingDays <= 0
+            ? "Process Refund"
+            : "Pending ($remainingDays days)";
+        if (remainingDays <= 0) {
+          onRedeemPressed = () => _handleProcessRedeem(user.uid);
+        }
+      }
+    } else {
+      onRedeemPressed = totalBalance > 0
+          ? () => _handleRequestRedemption(user.uid)
+          : null;
+    }
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 24),
       padding: const EdgeInsets.all(24),
@@ -127,34 +151,54 @@ class _WalletPageState extends State<WalletPage> {
                 ),
               ),
               Icon(
-                Icons.contactless_rounded,
+                Icons.account_balance_rounded,
                 color: Colors.white.withValues(alpha: 0.8),
               ),
             ],
           ),
           const SizedBox(height: 10),
           Text(
-            "₹${balance.toStringAsFixed(2)}",
+            "₹${totalBalance.toStringAsFixed(2)}",
             style: GoogleFonts.outfit(
               color: Colors.white,
               fontSize: 40,
               fontWeight: FontWeight.bold,
             ),
           ),
+          if (user.fineAccumulated > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 8.0),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.redAccent.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  "Includes ₹${user.fineAccumulated.toStringAsFixed(2)} fine due",
+                  style: GoogleFonts.outfit(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ),
           const SizedBox(height: 30),
           Row(
             children: [
               Expanded(
                 child: ElevatedButton.icon(
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text("Add Money Feature Coming Soon!"),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.add_rounded),
-                  label: const Text("Add Money"),
+                  onPressed: onRedeemPressed,
+                  icon: Icon(
+                    isPending
+                        ? Icons.hourglass_empty_rounded
+                        : Icons.keyboard_return_rounded,
+                  ),
+                  label: Text(redeemButtonText),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.white,
                     foregroundColor: const Color(0xFF0066FF),
@@ -167,77 +211,6 @@ class _WalletPageState extends State<WalletPage> {
                 ),
               ),
             ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSecurityDepositCard(UserModel user) {
-    bool canRedeem = false;
-    String statusMessage = "Deposit Not Paid";
-
-    if (user.hasSecurityDeposit) {
-      statusMessage = "Deposit Active";
-      if (user.securityDepositDate != null) {
-        final now = DateTime.now();
-        final diff = now.difference(user.securityDepositDate!);
-        if (diff.inDays >= 5) {
-          canRedeem = true;
-          statusMessage = "Redeemable";
-        } else {
-          statusMessage = "Redeemable in ${5 - diff.inDays} days";
-        }
-      }
-    } else {
-      return const SizedBox.shrink(); // Don't show if not paid
-    }
-
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 24),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF0F7FF),
-        borderRadius: BorderRadius.circular(25),
-        border: Border.all(color: const Color(0xFFCCE0FF)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  "Security Deposit",
-                  style: GoogleFonts.outfit(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: const Color(0xFF0066FF),
-                  ),
-                ),
-                Text(
-                  "₹100.00 • $statusMessage",
-                  style: GoogleFonts.outfit(
-                    fontSize: 12,
-                    color: Colors.grey[600],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          ElevatedButton(
-            onPressed: canRedeem ? () => _handleRedeem(user.uid) : null,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF0066FF),
-              foregroundColor: Colors.white,
-              disabledBackgroundColor: Colors.grey[200],
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              elevation: 0,
-            ),
-            child: const Text("Redeem", style: TextStyle(fontSize: 12)),
           ),
         ],
       ),
@@ -290,45 +263,80 @@ class _WalletPageState extends State<WalletPage> {
                   padding: const EdgeInsets.symmetric(horizontal: 24),
                   itemCount: transactions.length,
                   separatorBuilder: (context, index) =>
-                      const SizedBox(height: 15),
+                      const SizedBox(height: 12),
                   itemBuilder: (context, index) {
                     final tx = transactions[index];
-                    final isCredit = tx.type == 'topup' || tx.type == 'refund';
+                    // Credit = money coming IN or held on behalf of user
+                    // deposit → user paid ₹100 held as security (debit from pocket)
+                    // rental_fee → user paid ₹10 for rental (debit)
+                    // penalty → extra charge (debit)
+                    // refund → deposit returned to wallet (credit)
+                    // topup → wallet top-up (credit)
+                    final isCredit = tx.type == 'refund' || tx.type == 'topup';
+                    final isDebit =
+                        tx.type == 'rental_fee' ||
+                        tx.type == 'deposit' ||
+                        tx.type == 'penalty';
+
                     final title = _getTransactionTitle(tx.type);
+
+                    // Pick the correct amount field
+                    double amount = 0;
+                    if (tx.type == 'deposit' || tx.type == 'refund') {
+                      amount = tx.securityDeposit;
+                    } else if (tx.type == 'penalty') {
+                      amount = tx.penaltyAmount;
+                    } else {
+                      amount = tx.rentalAmount;
+                    }
+
                     final dateStr = DateFormat(
                       'MMM dd, yyyy',
                     ).format(tx.timestamp);
                     final timeStr = DateFormat('hh:mm a').format(tx.timestamp);
-                    final amount = tx.type == 'deposit' || tx.type == 'refund'
-                        ? tx.securityDeposit
-                        : tx.rentalAmount;
+                    final subtitle =
+                        tx.umbrellaId != null && tx.umbrellaId!.isNotEmpty
+                        ? "${tx.umbrellaId} • $dateStr $timeStr"
+                        : "$dateStr • $timeStr";
+
+                    final color = isCredit
+                        ? Colors.green
+                        : isDebit
+                        ? Colors.red
+                        : Colors.orange;
+                    final sign = isCredit ? '+' : '-';
 
                     return Container(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
-                        color: Colors.grey[50],
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: Colors.grey[200]!),
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: Colors.grey.shade100),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.03),
+                            blurRadius: 6,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
                       ),
                       child: Row(
                         children: [
                           Container(
-                            padding: const EdgeInsets.all(12),
+                            padding: const EdgeInsets.all(11),
                             decoration: BoxDecoration(
-                              color: isCredit
-                                  ? Colors.green.withValues(alpha: 0.1)
-                                  : Colors.red.withValues(alpha: 0.1),
+                              color: color.withValues(alpha: 0.1),
                               shape: BoxShape.circle,
                             ),
                             child: Icon(
                               isCredit
                                   ? Icons.arrow_downward_rounded
                                   : Icons.arrow_upward_rounded,
-                              color: isCredit ? Colors.green : Colors.red,
-                              size: 20,
+                              color: color,
+                              size: 18,
                             ),
                           ),
-                          const SizedBox(width: 16),
+                          const SizedBox(width: 14),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -337,26 +345,26 @@ class _WalletPageState extends State<WalletPage> {
                                   title,
                                   style: GoogleFonts.outfit(
                                     fontWeight: FontWeight.bold,
-                                    fontSize: 16,
+                                    fontSize: 15,
                                     color: const Color(0xFF1A1A1A),
                                   ),
                                 ),
                                 Text(
-                                  "$dateStr • $timeStr",
+                                  subtitle,
                                   style: GoogleFonts.outfit(
                                     color: Colors.grey[500],
-                                    fontSize: 13,
+                                    fontSize: 12,
                                   ),
                                 ),
                               ],
                             ),
                           ),
                           Text(
-                            "${isCredit ? '+' : '-'}₹${amount.toStringAsFixed(0)}",
+                            "$sign₹${amount.toStringAsFixed(0)}",
                             style: GoogleFonts.outfit(
                               fontWeight: FontWeight.bold,
                               fontSize: 16,
-                              color: isCredit ? Colors.green : Colors.red,
+                              color: color,
                             ),
                           ),
                         ],
@@ -389,12 +397,33 @@ class _WalletPageState extends State<WalletPage> {
     }
   }
 
-  void _handleRedeem(String uid) async {
+  void _handleRequestRedemption(String uid) async {
+    try {
+      await DatabaseService().requestRedemption(uid);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              "Refund request submitted! It will be verified within 5 days.",
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.toString())));
+      }
+    }
+  }
+
+  void _handleProcessRedeem(String uid) async {
     try {
       await DatabaseService().redeemSecurityDeposit(uid);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Security deposit redeemed to wallet!")),
+          const SnackBar(content: Text("Security deposit refunded to wallet!")),
         );
       }
     } catch (e) {

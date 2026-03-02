@@ -6,11 +6,15 @@ class UserModel {
   final String email;
   final String phoneNumber;
   final double walletBalance;
+  final double securityDeposit; // Formal amount
+  final double fineAccumulated; // Total fine currently due
   final String address;
   final String pinCode;
   final bool hasSecurityDeposit;
   final DateTime? securityDepositDate;
-  final List<String> activeRentalIds; // Support multiple rentals
+  final List<String> activeRentalIds;
+  final DateTime? redemptionRequestedAt;
+  final String redemptionStatus;
   final DateTime createdAt;
 
   UserModel({
@@ -21,9 +25,13 @@ class UserModel {
     this.address = '',
     this.pinCode = '',
     this.walletBalance = 0.0,
+    this.securityDeposit = 0.0,
+    this.fineAccumulated = 0.0,
     this.hasSecurityDeposit = false,
     this.securityDepositDate,
     this.activeRentalIds = const [],
+    this.redemptionRequestedAt,
+    this.redemptionStatus = 'none',
     required this.createdAt,
   });
 
@@ -34,6 +42,8 @@ class UserModel {
       email: data['email'] ?? '',
       phoneNumber: data['phoneNumber'] ?? '',
       walletBalance: (data['walletBalance'] as num?)?.toDouble() ?? 0.0,
+      securityDeposit: (data['securityDeposit'] as num?)?.toDouble() ?? 0.0,
+      fineAccumulated: (data['fineAccumulated'] as num?)?.toDouble() ?? 0.0,
       hasSecurityDeposit: data['hasSecurityDeposit'] ?? false,
       securityDepositDate: (data['securityDepositDate'] is Timestamp)
           ? (data['securityDepositDate'] as Timestamp).toDate()
@@ -41,6 +51,10 @@ class UserModel {
       address: data['address'] ?? '',
       pinCode: data['pinCode'] ?? '',
       activeRentalIds: List<String>.from(data['activeRentalIds'] ?? []),
+      redemptionRequestedAt: (data['redemptionRequestedAt'] is Timestamp)
+          ? (data['redemptionRequestedAt'] as Timestamp).toDate()
+          : null,
+      redemptionStatus: data['redemptionStatus'] ?? 'none',
       createdAt: (data['createdAt'] is Timestamp)
           ? (data['createdAt'] as Timestamp).toDate()
           : DateTime.now(),
@@ -54,6 +68,8 @@ class UserModel {
       'email': email,
       'phoneNumber': phoneNumber,
       'walletBalance': walletBalance,
+      'securityDeposit': securityDeposit,
+      'fineAccumulated': fineAccumulated,
       'hasSecurityDeposit': hasSecurityDeposit,
       'securityDepositDate': securityDepositDate != null
           ? Timestamp.fromDate(securityDepositDate!)
@@ -61,6 +77,10 @@ class UserModel {
       'address': address,
       'pinCode': pinCode,
       'activeRentalIds': activeRentalIds,
+      'redemptionRequestedAt': redemptionRequestedAt != null
+          ? Timestamp.fromDate(redemptionRequestedAt!)
+          : null,
+      'redemptionStatus': redemptionStatus,
       'createdAt': Timestamp.fromDate(createdAt),
     };
   }

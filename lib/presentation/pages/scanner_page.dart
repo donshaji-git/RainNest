@@ -9,10 +9,13 @@ import '../../services/payment_service.dart';
 import 'payment_processing_page.dart';
 import 'package:vibration/vibration.dart';
 import '../../providers/station_provider.dart';
+import '../../data/models/transaction.dart';
 import '../../services/database_service.dart';
+import 'home_page.dart';
 
 class ScannerPage extends StatefulWidget {
-  const ScannerPage({super.key});
+  final TransactionModel? returnRental;
+  const ScannerPage({super.key, this.returnRental});
 
   @override
   State<ScannerPage> createState() => _ScannerPageState();
@@ -73,6 +76,11 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
     Vibration.vibrate(duration: 100);
 
     final rentalProvider = context.read<RentalProvider>();
+
+    if (widget.returnRental != null) {
+      _handleReturnScan(code);
+      return;
+    }
 
     if (!rentalProvider.isVerifying) {
       // General scan mode - try to find a matching station
@@ -141,7 +149,77 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
     }
   }
 
-  void _proceedToPayment(Station targetStation) {
+  void _handleReturnScan(String code) async {
+    final stationProvider = context.read<StationProvider>();
+    final matchedStation = stationProvider.stations.firstWhere(
+      (s) => s.machineQrCode == code,
+      orElse: () => Station(
+        stationId: '',
+        name: '',
+        description: '',
+        totalSlots: 0,
+        availableCount: 0,
+        freeSlotsCount: 0,
+        queueOrder: [],
+        machineQrCode: '',
+        latitude: 0,
+        longitude: 0,
+      ),
+    );
+
+    if (matchedStation.stationId.isEmpty) {
+      setState(() {
+        _statusMessage = "Invalid Machine QR code";
+      });
+      return;
+    }
+
+    setState(() {
+      _isProcessing = true;
+      _statusMessage = "Processing Return...";
+    });
+
+    try {
+      final userProvider = context.read<UserProvider>();
+      final userId = userProvider.user?.uid ?? "";
+
+      await DatabaseService().returnUmbrella(
+        transactionId: widget.returnRental!.transactionId,
+        userId: userId,
+        stationId: matchedStation.stationId,
+        umbrellaId: widget.returnRental!.umbrellaId ?? '',
+      );
+
+      if (mounted) {
+        setState(() {
+          _isSuccess = true;
+          _statusMessage = "Returned Successfully!";
+        });
+
+        Vibration.vibrate(duration: 200);
+        await Future.delayed(const Duration(seconds: 1));
+
+        if (mounted) {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const HomePage(initialIndex: 1),
+            ),
+            (route) => false,
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+          _statusMessage = "Error: $e";
+        });
+      }
+    }
+  }
+
+  void _proceedToPayment(Station targetStation) async {
     final userProvider = context.read<UserProvider>();
     final user = userProvider.user;
     if (user == null) return;
@@ -153,79 +231,38 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
       return;
     }
 
-    // Unified Payment Logic:
-    // Required wallet balance is 100 Rs (security) + 10 Rs (rent) = 110 Rs
-    // If user has less, calculate difference.
-    final currentBalance = user.walletBalance;
-    // If they already have 110+, they still pay 10 Rs rent from wallet?
-    // Actually the logic is: always pay 10 Rs rent.
-    // And ensure wallet has 100 Rs left.
-    // So if currentBalance is 100, they need 10.
-    // If currentBalance is 50, they need 60.
-
-    double toPay = 0.0;
-    if (currentBalance < 110.0) {
-      toPay = 110.0 - currentBalance;
-    } else {
-      toPay =
-          10.0; // They have enough, but we should decide if we deduct from wallet or pay again.
-      // USER: "befor each rental make sure the that the wallet has 100 if not then calcutae the amount along with the rentall fee"
-      // If balance is 150, 150 - 10 = 140 (OK).
-    }
-
-    final umbrellaId = targetStation.queueOrder.first;
-
-    if (currentBalance >= 110.0) {
-      // Direct rental from wallet balance
-      _handleDirectRental(user.uid, targetStation.stationId, umbrellaId);
-    } else {
-      // Need to pay the difference via Razorpay
-      _initiateRazorpayPayment(
-        context: context,
-        userId: user.uid,
-        stationId: targetStation.stationId,
-        umbrellaId: umbrellaId,
-        amount: toPay,
-        description: "Umbrella Rental & Deposit - RainNest",
-        phone: user.phoneNumber,
-        email: user.email,
-        addedBalance: toPay - 10.0, // The portion that goes to security deposit
-      );
-    }
-  }
-
-  void _handleDirectRental(
-    String userId,
-    String stationId,
-    String umbrellaId,
-  ) async {
     setState(() {
       _isProcessing = true;
-      _statusMessage = "Processing rental...";
+      _statusMessage = "Calculating amount...";
     });
 
     try {
-      final paymentId = 'wallet_${DateTime.now().millisecondsSinceEpoch}';
-      await DatabaseService().rentUmbrella(
-        userId: userId,
-        stationId: stationId,
-        paymentId: paymentId,
-        addedBalance: 0,
+      final requiredPayment = await DatabaseService().getRequiredPayment(
+        user.uid,
       );
+      final umbrellaId = targetStation.queueOrder.first;
 
-      if (!mounted) return;
-
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (context) => PaymentProcessingPage(
-            userId: userId,
-            stationId: stationId,
+      if (user.walletBalance >= requiredPayment) {
+        // Direct rental from wallet balance
+        if (mounted) {
+          _handleDirectRental(user.uid, targetStation.stationId, umbrellaId);
+        }
+      } else {
+        // Need to pay via Razorpay
+        if (mounted) {
+          _initiateRazorpayPayment(
+            context: context,
+            userId: user.uid,
+            stationId: targetStation.stationId,
             umbrellaId: umbrellaId,
-            paymentId: paymentId,
-          ),
-        ),
-      );
+            amount: requiredPayment,
+            description: "Umbrella Rental & Deposit - RainNest",
+            phone: user.phoneNumber,
+            email: user.email,
+            addedBalance: requiredPayment,
+          );
+        }
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -234,6 +271,24 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
         });
       }
     }
+  }
+
+  void _handleDirectRental(String userId, String stationId, String umbrellaId) {
+    // Navigate to PaymentProcessingPage with addedBalance: 0
+    // It will handle the rentUmbrella DB call using the wallet balance directly.
+    final paymentId = 'wallet_${DateTime.now().millisecondsSinceEpoch}';
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PaymentProcessingPage(
+          userId: userId,
+          stationId: stationId,
+          umbrellaId: umbrellaId,
+          paymentId: paymentId,
+          addedBalance: 0,
+        ),
+      ),
+    );
   }
 
   void _initiateRazorpayPayment({
@@ -253,10 +308,6 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
       onSuccess: (response) async {
         if (!mounted) return;
 
-        final paymentId =
-            response.paymentId ??
-            'pay_${DateTime.now().millisecondsSinceEpoch}';
-
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
@@ -264,7 +315,12 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
               userId: userId,
               stationId: stationId,
               umbrellaId: umbrellaId,
-              paymentId: paymentId,
+              paymentId: response.paymentId ?? '',
+              orderId: response.orderId,
+              signature: response.signature,
+              paymentLog: response.data != null
+                  ? Map<String, dynamic>.from(response.data!)
+                  : null,
               addedBalance: addedBalance,
             ),
           ),
@@ -396,16 +452,26 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            rentalProvider.isVerifying
-                                ? "Verify Machine"
-                                : "Scan QR Code",
+                            widget.returnRental != null
+                                ? "Scan Machine to Return"
+                                : (rentalProvider.isVerifying
+                                      ? "Verify Machine"
+                                      : "Scan QR Code"),
                             style: GoogleFonts.outfit(
                               color: Colors.white,
                               fontSize: 28,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                          if (rentalProvider.isVerifying)
+                          if (widget.returnRental != null)
+                            Text(
+                              "Umbrella #${widget.returnRental!.umbrellaId}",
+                              style: GoogleFonts.outfit(
+                                color: Colors.white.withValues(alpha: 0.7),
+                                fontSize: 16,
+                              ),
+                            )
+                          else if (rentalProvider.isVerifying)
                             Text(
                               "Scanning for: ${rentalProvider.targetStation?.name}",
                               style: GoogleFonts.outfit(
@@ -472,9 +538,11 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
                   child: Column(
                     children: [
                       Text(
-                        rentalProvider.isVerifying
-                            ? "Position the machine's QR code within the frame"
-                            : "Position any RainNest QR code within the frame",
+                        widget.returnRental != null
+                            ? "Position the station's QR code to complete return"
+                            : (rentalProvider.isVerifying
+                                  ? "Position the machine's QR code within the frame"
+                                  : "Position any RainNest QR code within the frame"),
                         textAlign: TextAlign.center,
                         style: GoogleFonts.outfit(
                           color: Colors.white.withValues(alpha: 0.7),

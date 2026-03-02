@@ -5,6 +5,9 @@ class TransactionModel {
   final String userId;
   final String? umbrellaId;
   final String? paymentId; // Razorpay payment ID
+  final String? orderId; // Razorpay order ID
+  final String? signature; // Razorpay signature
+  final Map<String, dynamic>? paymentLog; // Full Razorpay log
   final double rentalAmount;
   final double securityDeposit;
   final double penaltyAmount;
@@ -17,6 +20,9 @@ class TransactionModel {
     required this.userId,
     this.umbrellaId,
     this.paymentId,
+    this.orderId,
+    this.signature,
+    this.paymentLog,
     this.rentalAmount = 0.0,
     this.securityDeposit = 0.0,
     this.penaltyAmount = 0.0,
@@ -31,6 +37,9 @@ class TransactionModel {
       'userId': userId,
       'umbrellaId': umbrellaId,
       'paymentId': paymentId,
+      'orderId': orderId,
+      'signature': signature,
+      'paymentLog': paymentLog,
       'rentalAmount': rentalAmount,
       'securityDeposit': securityDeposit,
       'penaltyAmount': penaltyAmount,
@@ -46,6 +55,11 @@ class TransactionModel {
       userId: data['userId'] ?? '',
       umbrellaId: data['umbrellaId'],
       paymentId: data['paymentId'],
+      orderId: data['orderId'],
+      signature: data['signature'],
+      paymentLog: data['paymentLog'] != null
+          ? Map<String, dynamic>.from(data['paymentLog'])
+          : null,
       rentalAmount: (data['rentalAmount'] as num?)?.toDouble() ?? 0.0,
       securityDeposit: (data['securityDeposit'] as num?)?.toDouble() ?? 0.0,
       penaltyAmount: (data['penaltyAmount'] as num?)?.toDouble() ?? 0.0,

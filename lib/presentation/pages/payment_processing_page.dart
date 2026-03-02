@@ -2,11 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../services/database_service.dart';
 import '../widgets/rain_nest_loader.dart';
+import 'umbrella_verification_page.dart';
 
 class PaymentProcessingPage extends StatefulWidget {
   final String stationId;
   final String umbrellaId;
   final String paymentId;
+  final String? orderId;
+  final String? signature;
+  final Map<String, dynamic>? paymentLog;
   final double addedBalance;
   final String userId;
 
@@ -15,6 +19,9 @@ class PaymentProcessingPage extends StatefulWidget {
     required this.stationId,
     required this.umbrellaId,
     required this.paymentId,
+    this.orderId,
+    this.signature,
+    this.paymentLog,
     this.addedBalance = 0.0,
     required this.userId,
   });
@@ -44,10 +51,13 @@ class _PaymentProcessingPageState extends State<PaymentProcessingPage> {
       });
 
       // 2. Perform Database Finalization
-      await DatabaseService().rentUmbrella(
+      final result = await DatabaseService().rentUmbrella(
         userId: widget.userId,
         stationId: widget.stationId,
         paymentId: widget.paymentId,
+        orderId: widget.orderId,
+        signature: widget.signature,
+        paymentLog: widget.paymentLog,
         addedBalance: widget.addedBalance,
       );
 
@@ -61,8 +71,18 @@ class _PaymentProcessingPageState extends State<PaymentProcessingPage> {
       await Future.delayed(const Duration(milliseconds: 1000));
       if (!mounted) return;
 
-      // Navigate back to Home
-      Navigator.of(context).popUntil((route) => route.isFirst);
+      // Navigate to Condition Verification Page instead of Home
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (context) => UmbrellaConditionVerificationPage(
+            userId: widget.userId,
+            stationId: widget.stationId,
+            umbrellaId: result['umbrellaId']!,
+            transactionId: result['transactionId']!,
+          ),
+        ),
+        (route) => false,
+      );
     } catch (e) {
       if (mounted) {
         setState(() {

@@ -5,6 +5,8 @@ import '../data/models/umbrella.dart';
 import '../data/models/transaction.dart';
 
 class DatabaseService {
+  DatabaseService();
+
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
   // Collection References
@@ -72,10 +74,24 @@ class DatabaseService {
 
   // --- Rental Flow (FIFO) ---
 
-  Future<String> rentUmbrella({
+  Future<double> getRequiredPayment(String userId) async {
+    final userSnap = await _usersCollection.doc(userId).get();
+    if (!userSnap.exists) return 110.0;
+    final user = UserModel.fromMap(userSnap.data() as Map<String, dynamic>);
+
+    // Unified: We want walletBalance to be at least 100
+    double currentBalance = user.walletBalance;
+    double topupNeeded = (100.0 - currentBalance).clamp(0.0, 100.0);
+    return topupNeeded + 10.0; // Topup + Rental Fee
+  }
+
+  Future<Map<String, dynamic>> rentUmbrella({
     required String stationId,
     required String userId,
-    required String paymentId,
+    String? paymentId,
+    String? orderId,
+    String? signature,
+    Map<String, dynamic>? paymentLog,
     double addedBalance = 0.0,
   }) async {
     return await _db.runTransaction((transaction) async {
@@ -88,18 +104,31 @@ class DatabaseService {
         userSnap.data() as Map<String, dynamic>,
       );
 
-      // Calculate logic with added balance
-      double currentWallet = user.walletBalance + addedBalance;
+      // Business Logic: Unified Balance
+      double topupNeeded = (100.0 - user.walletBalance).clamp(0.0, 100.0);
+      double totalRequired = topupNeeded + 10.0;
 
-      // We expect the wallet to have at least 110 (100 security + 10 rent) for the first time
-      // or at least 100 + 10 for subsequent times if we want to maintain the 100 balance.
-      if (currentWallet < 10.0) {
-        throw Exception("Insufficient balance for rental fee.");
+      double finalWalletBalance = user.walletBalance;
+
+      if (addedBalance > 0) {
+        // Razorpay payment
+        if (addedBalance < totalRequired) {
+          throw Exception("Payment insufficient. Required: ₹$totalRequired");
+        }
+        finalWalletBalance +=
+            addedBalance - 10.0; // Add deposit/topup, subtract rent
+      } else {
+        // Wallet payment
+        if (finalWalletBalance < totalRequired) {
+          throw Exception("Insufficient balance for ₹$totalRequired");
+        }
+        finalWalletBalance -=
+            10.0; // Only subtract rent if topup was already in wallet
       }
 
-      // After 10 Rs deduction, wallet must have at least 100 Rs
-      if (currentWallet - 10.0 < 100.0) {
-        throw Exception("Insufficient security deposit. 100 Rs required.");
+      // Max 3 umbrellas at a time
+      if (user.activeRentalIds.length >= 3) {
+        throw Exception("You can rent a maximum of 3 umbrellas at a time.");
       }
 
       // 2. Get Station
@@ -130,59 +159,77 @@ class DatabaseService {
       DocumentReference umbrellaRef = _umbrellasCollection.doc(umbrellaId);
       transaction.update(umbrellaRef, {'status': 'rented', 'stationId': null});
 
-      // 6. Update User (Wallet & Active Rentals)
       transaction.update(userRef, {
         'activeRentalIds': FieldValue.arrayUnion([umbrellaId]),
-        'walletBalance':
-            currentWallet - 10.0, // Deduct 10 Rs, include addedBalance
-        'hasSecurityDeposit': true, // User now has security deposit in wallet
+        'walletBalance': finalWalletBalance,
+        'securityDeposit': finalWalletBalance.clamp(
+          0.0,
+          100.0,
+        ), // Keep for backward compat
+        'hasSecurityDeposit': finalWalletBalance >= 100.0,
       });
 
-      // 7. Record Transaction (Rental Fee)
-      DocumentReference transRef = _transactionsCollection.doc();
-      TransactionModel t = TransactionModel(
-        transactionId: transRef.id,
+      // 7. Record Admin Earnings
+      DocumentReference adminRef = _db.collection('admin').doc('stats');
+      transaction.set(adminRef, {
+        'totalEarnings': FieldValue.increment(10.0),
+      }, SetOptions(merge: true));
+
+      // 8. Record Transactions
+      DocumentReference rentTransRef = _transactionsCollection.doc();
+      TransactionModel rentTx = TransactionModel(
+        transactionId: rentTransRef.id,
         userId: userId,
         umbrellaId: umbrellaId,
         paymentId: paymentId,
+        orderId: orderId,
+        signature: signature,
+        paymentLog: paymentLog,
         rentalAmount: 10.0,
-        securityDeposit: addedBalance, // Record if any deposit was added
         status: 'success',
         type: 'rental_fee',
         timestamp: DateTime.now(),
       );
-      transaction.set(transRef, t.toMap());
+      transaction.set(rentTransRef, rentTx.toMap());
 
-      return transRef.id;
+      if (addedBalance > 10.0 || topupNeeded > 0) {
+        double depositAmt = addedBalance > 0
+            ? (addedBalance - 10.0)
+            : topupNeeded;
+        DocumentReference depositTransRef = _transactionsCollection.doc();
+        TransactionModel depositTx = TransactionModel(
+          transactionId: depositTransRef.id,
+          userId: userId,
+          paymentId: paymentId,
+          orderId: orderId,
+          signature: signature,
+          paymentLog: paymentLog,
+          securityDeposit: depositAmt,
+          status: 'success',
+          type: 'deposit',
+          timestamp: DateTime.now(),
+        );
+        transaction.set(depositTransRef, depositTx.toMap());
+      }
+
+      return {'transactionId': rentTransRef.id, 'umbrellaId': umbrellaId};
     });
   }
 
-  Future<void> paySecurityDeposit({
-    required String userId,
-    required String paymentId,
-  }) async {
-    await _db.runTransaction((transaction) async {
-      DocumentReference userRef = _usersCollection.doc(userId);
-      DocumentSnapshot userSnap = await transaction.get(userRef);
-      if (!userSnap.exists) throw Exception("User not found");
+  Future<void> requestRedemption(String userId) async {
+    final userSnap = await _usersCollection.doc(userId).get();
+    if (!userSnap.exists) throw Exception("User not found");
+    final user = UserModel.fromMap(userSnap.data() as Map<String, dynamic>);
 
-      transaction.update(userRef, {
-        'hasSecurityDeposit': true,
-        'securityDepositDate': FieldValue.serverTimestamp(),
-      });
-
-      // Record Deposit Transaction
-      DocumentReference transRef = _transactionsCollection.doc();
-      TransactionModel t = TransactionModel(
-        transactionId: transRef.id,
-        userId: userId,
-        paymentId: paymentId,
-        securityDeposit: 100.0,
-        status: 'success',
-        type: 'deposit',
-        timestamp: DateTime.now(),
+    if (user.activeRentalIds.isNotEmpty) {
+      throw Exception(
+        "Please return all umbrellas before requesting a deposit refund.",
       );
-      transaction.set(transRef, t.toMap());
+    }
+
+    await _usersCollection.doc(userId).update({
+      'redemptionStatus': 'pending',
+      'redemptionRequestedAt': FieldValue.serverTimestamp(),
     });
   }
 
@@ -196,25 +243,30 @@ class DatabaseService {
         userSnap.data() as Map<String, dynamic>,
       );
 
-      if (!user.hasSecurityDeposit) {
-        throw Exception("No security deposit found");
+      if (user.redemptionStatus != 'pending') {
+        throw Exception("Redemption not requested or already processed");
       }
+
       if (user.activeRentalIds.isNotEmpty) {
         throw Exception("Return all umbrellas before redeeming deposit");
       }
 
-      if (user.securityDepositDate != null) {
+      if (user.redemptionRequestedAt != null) {
         final now = DateTime.now();
-        final days = now.difference(user.securityDepositDate!).inDays;
+        final days = now.difference(user.redemptionRequestedAt!).inDays;
         if (days < 5) {
-          throw Exception("Deposit can only be redeemed after 5 days");
+          throw Exception(
+            "Deposit can only be redeemed after 5 days of verification",
+          );
         }
+      } else {
+        throw Exception("Redemption request date not found");
       }
 
       transaction.update(userRef, {
         'hasSecurityDeposit': false,
-        'securityDepositDate': null,
-        'walletBalance': FieldValue.increment(100.0),
+        'redemptionStatus': 'completed',
+        // Wallet balance remains what it is, just marked as redeemed (refunded by admin)
       });
 
       // Record Refund Transaction
@@ -222,7 +274,8 @@ class DatabaseService {
       TransactionModel t = TransactionModel(
         transactionId: transRef.id,
         userId: userId,
-        securityDeposit: 100.0,
+        securityDeposit:
+            user.walletBalance, // Refund the entire current wallet balance
         status: 'success',
         type: 'refund',
         timestamp: DateTime.now(),
@@ -284,34 +337,93 @@ class DatabaseService {
         'stationId': stationId,
       });
 
-      // 5. Update User (Wallet & Active Rentals)
+      // 5. Update User & Settle Penalty
       DocumentReference userRef = _usersCollection.doc(userId);
+      DocumentSnapshot userSnap = await transaction.get(userRef);
+      if (!userSnap.exists) throw Exception("User not found");
+      UserModel user = UserModel.fromMap(
+        userSnap.data() as Map<String, dynamic>,
+      );
+      double finalWalletBalance = user.walletBalance;
+
+      if (penalty > 0) {
+        finalWalletBalance -= penalty;
+      }
+
       transaction.update(userRef, {
         'activeRentalIds': FieldValue.arrayRemove([umbrellaId]),
-        'walletBalance': FieldValue.increment(-penalty),
+        'walletBalance': finalWalletBalance,
+        'securityDeposit': finalWalletBalance.clamp(0.0, 100.0),
+        'hasSecurityDeposit': finalWalletBalance >= 100.0,
+        // Reset fine accumulated for this specific rental
+        'fineAccumulated': 0.0,
       });
 
-      // 6. Record Penalty Transaction if any
+      // 6. Record Admin Penalty Earnings
       if (penalty > 0) {
+        DocumentReference adminRef = _db.collection('admin').doc('stats');
+        transaction.set(adminRef, {
+          'totalFineCollected': FieldValue.increment(penalty),
+        }, SetOptions(merge: true));
+
+        // 7. Record Penalty Transaction
         DocumentReference penaltyTransRef = _transactionsCollection.doc();
-        TransactionModel penaltyT = TransactionModel(
+        TransactionModel penaltyTx = TransactionModel(
           transactionId: penaltyTransRef.id,
           userId: userId,
           umbrellaId: umbrellaId,
-          rentalAmount: penalty,
+          penaltyAmount: penalty,
           status: 'success',
           type: 'penalty',
-          timestamp: now,
+          timestamp: DateTime.now(),
         );
-        transaction.set(penaltyTransRef, penaltyT.toMap());
+        transaction.set(penaltyTransRef, penaltyTx.toMap());
       }
 
-      // 7. Update original rental transaction
+      // 8. Update original rental transaction
       transaction.update(originalTransRef, {
         'status': 'completed',
-        'returnTimestamp': Timestamp.fromDate(now),
         'penaltyAmount': penalty,
+        'returnTimestamp': FieldValue.serverTimestamp(),
       });
+    });
+  }
+
+  /// Syncs fines for all active rentals of a user
+  /// Calculated as ₹5/hr after 10hr free period
+  Future<void> syncActiveFines(String userId) async {
+    final userSnap = await _usersCollection.doc(userId).get();
+    if (!userSnap.exists) return;
+    UserModel user = UserModel.fromMap(userSnap.data() as Map<String, dynamic>);
+
+    if (user.activeRentalIds.isEmpty) return;
+
+    // Get the most recent rental transactions for these umbrellas
+    final rentalsSnap = await _transactionsCollection
+        .where('userId', isEqualTo: userId)
+        .where('type', isEqualTo: 'rental_fee')
+        // Simplified: assuming we can find them. In production,
+        // handle multiple active rentals specifically.
+        .get();
+
+    double totalNewFine = 0.0;
+    final now = DateTime.now();
+
+    for (var doc in rentalsSnap.docs) {
+      final tx = TransactionModel.fromMap(
+        doc.data() as Map<String, dynamic>,
+        doc.id,
+      );
+      if (user.activeRentalIds.contains(tx.umbrellaId)) {
+        final elapsed = now.difference(tx.timestamp).inHours;
+        if (elapsed > 10) {
+          totalNewFine += (elapsed - 10) * 5.0;
+        }
+      }
+    }
+
+    await _usersCollection.doc(userId).update({
+      'fineAccumulated': totalNewFine,
     });
   }
 
@@ -385,5 +497,12 @@ class DatabaseService {
 
   Future<void> saveUmbrella(Umbrella umbrella) async {
     await _umbrellasCollection.doc(umbrella.umbrellaId).set(umbrella.toMap());
+  }
+
+  Future<List<Station>> getAllStations() async {
+    final snap = await _stationsCollection.get();
+    return snap.docs.map((doc) {
+      return Station.fromMap(doc.data() as Map<String, dynamic>, doc.id);
+    }).toList();
   }
 }
