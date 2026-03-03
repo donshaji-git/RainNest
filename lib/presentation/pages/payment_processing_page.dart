@@ -13,6 +13,8 @@ class PaymentProcessingPage extends StatefulWidget {
   final Map<String, dynamic>? paymentLog;
   final double addedBalance;
   final String userId;
+  final double? latitude;
+  final double? longitude;
 
   const PaymentProcessingPage({
     super.key,
@@ -24,6 +26,8 @@ class PaymentProcessingPage extends StatefulWidget {
     this.paymentLog,
     this.addedBalance = 0.0,
     required this.userId,
+    this.latitude,
+    this.longitude,
   });
 
   @override
@@ -59,6 +63,8 @@ class _PaymentProcessingPageState extends State<PaymentProcessingPage> {
         signature: widget.signature,
         paymentLog: widget.paymentLog,
         addedBalance: widget.addedBalance,
+        latitude: widget.latitude,
+        longitude: widget.longitude,
       );
 
       if (!mounted) return;

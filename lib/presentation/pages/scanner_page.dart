@@ -7,11 +7,12 @@ import '../../providers/user_provider.dart';
 import '../../data/models/station.dart';
 import '../../services/payment_service.dart';
 import 'payment_processing_page.dart';
+import 'umbrella_return_verification_page.dart';
 import 'package:vibration/vibration.dart';
+import '../../providers/location_provider.dart';
 import '../../providers/station_provider.dart';
 import '../../data/models/transaction.dart';
 import '../../services/database_service.dart';
-import 'home_page.dart';
 
 class ScannerPage extends StatefulWidget {
   final TransactionModel? returnRental;
@@ -30,6 +31,10 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
   String? _statusMessage;
   bool _isSuccess = false;
   PaymentService? _paymentService;
+
+  // Anti-double-scan logic
+  String? _lastScannedCode;
+  DateTime? _lastScanTime;
 
   @override
   void initState() {
@@ -75,6 +80,15 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
     // Haptic feedback
     Vibration.vibrate(duration: 100);
 
+    // Global cooldown to prevent rapid fire
+    final now = DateTime.now();
+    if (_lastScanTime != null &&
+        now.difference(_lastScanTime!).inMilliseconds < 1500) {
+      if (code == _lastScannedCode) return;
+    }
+    _lastScanTime = now;
+    _lastScannedCode = code;
+
     final rentalProvider = context.read<RentalProvider>();
 
     if (widget.returnRental != null) {
@@ -102,6 +116,14 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
       );
 
       if (matchedStation.stationId.isNotEmpty) {
+        final userProvider = context.read<UserProvider>();
+        if (userProvider.hasActiveRentals) {
+          // Pause scanner and ask user
+          _controller.stop();
+          _showActionSelectionDialog(matchedStation);
+          return;
+        }
+
         rentalProvider.setTargetStation(matchedStation);
         setState(() {
           _statusMessage = "Machine Found: ${matchedStation.name}";
@@ -174,40 +196,59 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
       return;
     }
 
+    final user = Provider.of<UserProvider>(context, listen: false).user;
+    if (user == null) {
+      setState(() {
+        _statusMessage = "User not logged in.";
+      });
+      return;
+    }
+
     setState(() {
       _isProcessing = true;
-      _statusMessage = "Processing Return...";
+      _statusMessage = "Verifying machine and rental...";
     });
 
     try {
-      final userProvider = context.read<UserProvider>();
-      final userId = userProvider.user?.uid ?? "";
-
-      await DatabaseService().returnUmbrella(
-        transactionId: widget.returnRental!.transactionId,
-        userId: userId,
-        stationId: matchedStation.stationId,
-        umbrellaId: widget.returnRental!.umbrellaId ?? '',
+      // 1. Verify machine exists
+      final station = await DatabaseService().getStation(
+        matchedStation.stationId,
       );
+      if (station == null) {
+        throw Exception("Station not found");
+      }
+
+      // 2. Fetch active/late rental transaction
+      final rentals = await DatabaseService().getUserTransactions(user.uid);
+
+      // Use widget.returnRental if provided (ensure it's still valid/active)
+      TransactionModel? activeRental;
+      if (widget.returnRental != null) {
+        activeRental = rentals.firstWhere(
+          (t) =>
+              t.transactionId == widget.returnRental!.transactionId &&
+              (t.status == 'active' || t.status == 'late'),
+          orElse: () => throw Exception("Selected rental is no longer active"),
+        );
+      } else {
+        activeRental = rentals.firstWhere(
+          (t) =>
+              (t.status == 'active' || t.status == 'late') &&
+              t.type == 'rental_fee',
+          orElse: () => throw Exception("No active rental found"),
+        );
+      }
 
       if (mounted) {
-        setState(() {
-          _isSuccess = true;
-          _statusMessage = "Returned Successfully!";
-        });
-
-        Vibration.vibrate(duration: 200);
-        await Future.delayed(const Duration(seconds: 1));
-
-        if (mounted) {
-          Navigator.pushAndRemoveUntil(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const HomePage(initialIndex: 1),
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (context) => UmbrellaReturnVerificationPage(
+              userId: user.uid,
+              stationId: matchedStation.stationId,
+              rental: activeRental!,
             ),
-            (route) => false,
-          );
-        }
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -237,12 +278,24 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
     });
 
     try {
+      // 1. Re-verify station availability from DB
+      final latestStation = await DatabaseService().getStation(
+        targetStation.stationId,
+      );
+      if (latestStation == null || latestStation.queueOrder.isEmpty) {
+        setState(() {
+          _isProcessing = false;
+          _statusMessage = "Sorry, no umbrellas left at this station.";
+        });
+        return;
+      }
+
       final requiredPayment = await DatabaseService().getRequiredPayment(
         user.uid,
       );
-      final umbrellaId = targetStation.queueOrder.first;
+      final umbrellaId = latestStation.queueOrder.first;
 
-      if (user.walletBalance >= requiredPayment) {
+      if (requiredPayment <= 0) {
         // Direct rental from wallet balance
         if (mounted) {
           _handleDirectRental(user.uid, targetStation.stationId, umbrellaId);
@@ -277,6 +330,9 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
     // Navigate to PaymentProcessingPage with addedBalance: 0
     // It will handle the rentUmbrella DB call using the wallet balance directly.
     final paymentId = 'wallet_${DateTime.now().millisecondsSinceEpoch}';
+    final locationProvider = context.read<LocationProvider>();
+    final loc = locationProvider.currentLocation;
+
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
@@ -286,6 +342,8 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
           umbrellaId: umbrellaId,
           paymentId: paymentId,
           addedBalance: 0,
+          latitude: loc?.latitude,
+          longitude: loc?.longitude,
         ),
       ),
     );
@@ -308,6 +366,9 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
       onSuccess: (response) async {
         if (!mounted) return;
 
+        final locationProvider = context.read<LocationProvider>();
+        final loc = locationProvider.currentLocation;
+
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
@@ -322,6 +383,8 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
                   ? Map<String, dynamic>.from(response.data!)
                   : null,
               addedBalance: addedBalance,
+              latitude: loc?.latitude,
+              longitude: loc?.longitude,
             ),
           ),
         );
@@ -448,38 +511,40 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
                   padding: const EdgeInsets.all(24),
                   child: Row(
                     children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.returnRental != null
-                                ? "Scan Machine to Return"
-                                : (rentalProvider.isVerifying
-                                      ? "Verify Machine"
-                                      : "Scan QR Code"),
-                            style: GoogleFonts.outfit(
-                              color: Colors.white,
-                              fontSize: 28,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          if (widget.returnRental != null)
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
                             Text(
-                              "Umbrella #${widget.returnRental!.umbrellaId}",
+                              widget.returnRental != null
+                                  ? "Scan Machine to Return"
+                                  : (rentalProvider.isVerifying
+                                        ? "Verify Machine"
+                                        : "Scan QR Code"),
                               style: GoogleFonts.outfit(
-                                color: Colors.white.withValues(alpha: 0.7),
-                                fontSize: 16,
-                              ),
-                            )
-                          else if (rentalProvider.isVerifying)
-                            Text(
-                              "Scanning for: ${rentalProvider.targetStation?.name}",
-                              style: GoogleFonts.outfit(
-                                color: Colors.white.withValues(alpha: 0.7),
-                                fontSize: 16,
+                                color: Colors.white,
+                                fontSize: 28,
+                                fontWeight: FontWeight.bold,
                               ),
                             ),
-                        ],
+                            if (widget.returnRental != null)
+                              Text(
+                                "Umbrella #${widget.returnRental!.umbrellaId}",
+                                style: GoogleFonts.outfit(
+                                  color: Colors.white.withValues(alpha: 0.7),
+                                  fontSize: 16,
+                                ),
+                              )
+                            else if (rentalProvider.isVerifying)
+                              Text(
+                                "Scanning for: ${rentalProvider.targetStation?.name}",
+                                style: GoogleFonts.outfit(
+                                  color: Colors.white.withValues(alpha: 0.7),
+                                  fontSize: 16,
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
                       const Spacer(),
                       if (rentalProvider.isVerifying)
@@ -572,6 +637,222 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showActionSelectionDialog(Station station) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isDismissible: false,
+      enableDrag: false,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+        ),
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              "Station Found: ${station.name}",
+              style: GoogleFonts.outfit(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              "What would you like to do?",
+              style: GoogleFonts.outfit(color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildActionButton(
+                    icon: Icons.umbrella_rounded,
+                    label: "Rent",
+                    color: const Color(0xFF0066FF),
+                    onTap: () {
+                      Navigator.pop(context);
+                      context.read<RentalProvider>().setTargetStation(station);
+                      _controller.start();
+                      setState(() {
+                        _statusMessage = "Verify Machine QR again to Rent";
+                      });
+                    },
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _buildActionButton(
+                    icon: Icons.keyboard_return_rounded,
+                    label: "Return",
+                    color: Colors.orange,
+                    onTap: () {
+                      Navigator.pop(context);
+                      _showRentalSelectionBottomSheet(station);
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Center(
+              child: TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _controller.start();
+                },
+                child: Text(
+                  "Cancel",
+                  style: GoogleFonts.outfit(color: Colors.grey),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showRentalSelectionBottomSheet(Station station) async {
+    final user = context.read<UserProvider>().user;
+    if (user == null) return;
+
+    // Show loading while fetching rentals
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.6,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+        ),
+        child: Column(
+          children: [
+            const SizedBox(height: 20),
+            Text(
+              "Select Umbrella to Return",
+              style: GoogleFonts.outfit(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: StreamBuilder<List<TransactionModel>>(
+                stream: DatabaseService().getActiveRentalsStream(user.uid),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  final rentals = snapshot.data ?? [];
+                  if (rentals.isEmpty) {
+                    return const Center(child: Text("No active rentals found"));
+                  }
+
+                  return ListView.builder(
+                    padding: const EdgeInsets.all(20),
+                    itemCount: rentals.length,
+                    itemBuilder: (context, index) {
+                      final rental = rentals[index];
+                      return Card(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        margin: const EdgeInsets.only(bottom: 12),
+                        child: ListTile(
+                          leading: const Icon(
+                            Icons.umbrella_rounded,
+                            color: Color(0xFF0066FF),
+                          ),
+                          title: Text("Umbrella #${rental.umbrellaId}"),
+                          subtitle: Text(
+                            "Rented on ${rental.timestamp.day}/${rental.timestamp.month}",
+                          ),
+                          trailing: const Icon(Icons.chevron_right_rounded),
+                          onTap: () {
+                            Navigator.pop(context);
+                            Navigator.of(context).pushReplacement(
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    UmbrellaReturnVerificationPage(
+                                      userId: user.uid,
+                                      stationId: station.stationId,
+                                      rental: rental,
+                                    ),
+                              ),
+                            );
+                          },
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _controller.start();
+              },
+              child: const Text("Cancel"),
+            ),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: color, size: 32),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              style: GoogleFonts.outfit(
+                color: color,
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

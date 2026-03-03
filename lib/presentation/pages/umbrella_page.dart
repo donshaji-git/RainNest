@@ -7,7 +7,6 @@ import '../../providers/user_provider.dart';
 import '../../services/database_service.dart';
 import '../../data/models/transaction.dart';
 import '../../data/models/umbrella.dart';
-import '../../data/models/station.dart';
 import 'scanner_page.dart';
 
 class UmbrellaPage extends StatefulWidget {
@@ -35,6 +34,7 @@ class _UmbrellaPageState extends State<UmbrellaPage>
 
     // Sync fines on entrance
     Future.microtask(() {
+      if (!mounted) return;
       final user = context.read<UserProvider>().user;
       if (user != null) {
         DatabaseService().syncActiveFines(user.uid);
@@ -68,6 +68,13 @@ class _UmbrellaPageState extends State<UmbrellaPage>
             }
 
             final activeRentals = snapshot.data ?? [];
+
+            // Reactive fine sync: trigger when rentals load/change
+            if (snapshot.hasData) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                DatabaseService().syncActiveFines(user.uid);
+              });
+            }
 
             return FadeTransition(
               opacity: _fadeAnim,
@@ -180,11 +187,13 @@ class _UmbrellaPageState extends State<UmbrellaPage>
                       size: 18,
                     ),
                     const SizedBox(width: 8),
-                    Text(
-                      "Maximum 3 umbrellas reached. Return one to rent more.",
-                      style: GoogleFonts.outfit(
-                        fontSize: 12,
-                        color: Colors.orange[800],
+                    Expanded(
+                      child: Text(
+                        "Maximum 3 umbrellas reached. Return one to rent more.",
+                        style: GoogleFonts.outfit(
+                          fontSize: 12,
+                          color: Colors.orange[800],
+                        ),
                       ),
                     ),
                   ],
@@ -471,6 +480,7 @@ class _CountdownBarState extends State<_CountdownBar> {
     final endTime = widget.startTime.add(const Duration(hours: 10));
     final remaining = endTime.difference(DateTime.now());
     final elapsed = DateTime.now().difference(widget.startTime);
+    final totalMinutes = elapsed.inMinutes;
     final total = const Duration(hours: 10);
     double progress = (elapsed.inSeconds / total.inSeconds).clamp(0.0, 1.0);
 
@@ -484,9 +494,26 @@ class _CountdownBarState extends State<_CountdownBar> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              "Time Remaining",
-              style: GoogleFonts.outfit(fontSize: 12, color: Colors.grey[500]),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "Time Remaining",
+                  style: GoogleFonts.outfit(
+                    fontSize: 12,
+                    color: Colors.grey[500],
+                  ),
+                ),
+                if (isOverdue)
+                  Text(
+                    "Current Fine: ₹${((totalMinutes / 60.0).ceil() - 10) * 5}",
+                    style: GoogleFonts.outfit(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.red,
+                    ),
+                  ),
+              ],
             ),
             Text(
               label,

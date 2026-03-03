@@ -93,8 +93,7 @@ class _WalletPageState extends State<WalletPage> {
   }
 
   Widget _buildBalanceCard(BuildContext context, UserModel user) {
-    final totalBalance =
-        user.walletBalance + user.securityDeposit - user.fineAccumulated;
+    final totalBalance = user.walletBalance - user.fineAccumulated;
 
     String redeemButtonText = "Redeem Balance";
     VoidCallback? onRedeemPressed;
@@ -272,11 +271,15 @@ class _WalletPageState extends State<WalletPage> {
                     // penalty → extra charge (debit)
                     // refund → deposit returned to wallet (credit)
                     // topup → wallet top-up (credit)
-                    final isCredit = tx.type == 'refund' || tx.type == 'topup';
+                    final isCredit =
+                        tx.type == 'refund' ||
+                        tx.type == 'topup' ||
+                        tx.type == 'return';
                     final isDebit =
                         tx.type == 'rental_fee' ||
                         tx.type == 'deposit' ||
-                        tx.type == 'penalty';
+                        tx.type == 'penalty' ||
+                        tx.type == 'penalty_payment';
 
                     final title = _getTransactionTitle(tx.type);
 
@@ -384,6 +387,8 @@ class _WalletPageState extends State<WalletPage> {
     switch (type) {
       case 'rental_fee':
         return "Umbrella Rental";
+      case 'return':
+        return "Umbrella Returned";
       case 'deposit':
         return "Security Deposit";
       case 'refund':
@@ -391,7 +396,9 @@ class _WalletPageState extends State<WalletPage> {
       case 'topup':
         return "Wallet Top-up";
       case 'penalty':
-        return "Late Return Penalty";
+        return "Late Return Fine";
+      case 'penalty_payment':
+        return "Fine Payment";
       default:
         return "Transaction";
     }

@@ -79,10 +79,19 @@ class DatabaseService {
     if (!userSnap.exists) return 110.0;
     final user = UserModel.fromMap(userSnap.data() as Map<String, dynamic>);
 
-    // Unified: We want walletBalance to be at least 100
-    double currentBalance = user.walletBalance;
-    double topupNeeded = (100.0 - currentBalance).clamp(0.0, 100.0);
-    return topupNeeded + 10.0; // Topup + Rental Fee
+    // Unified: We want walletBalance to be at least 100 AFTER the 10 rent
+    // So total effectively 110. But we also must account for fines.
+    // effectiveBalance = currentBalance - fineAccumulated
+    // paymentNeeded = 110.0 - effectiveBalance
+    double effectiveBalance = user.walletBalance - user.fineAccumulated;
+    double paymentNeeded = (110.0 - effectiveBalance).clamp(0.0, 1000.0);
+
+    // Minimum payment if they already have balance?
+    // If they have 150 balance and 0 fine, paymentNeeded = 110 - 150 = -40 -> clamp(0) = 0.
+    // But they still need to pay the 10 rent if we want to enforce it?
+    // Actually, if walletBalance >= 110, they can just rent.
+    // If walletBalance < 110, they pay the difference to reach 110.
+    return paymentNeeded;
   }
 
   Future<Map<String, dynamic>> rentUmbrella({
@@ -93,6 +102,8 @@ class DatabaseService {
     String? signature,
     Map<String, dynamic>? paymentLog,
     double addedBalance = 0.0,
+    double? latitude,
+    double? longitude,
   }) async {
     return await _db.runTransaction((transaction) async {
       // 1. Get User
@@ -104,26 +115,36 @@ class DatabaseService {
         userSnap.data() as Map<String, dynamic>,
       );
 
-      // Business Logic: Unified Balance
-      double topupNeeded = (100.0 - user.walletBalance).clamp(0.0, 100.0);
-      double totalRequired = topupNeeded + 10.0;
+      // Business Logic: Unified Balance to reach 110 (100 deposit + 10 rent)
+      double fineToClear = user.fineAccumulated;
+      double effectiveBalance = user.walletBalance - fineToClear;
+      double paymentNeeded = (110.0 - effectiveBalance).clamp(0.0, 1000.0);
 
       double finalWalletBalance = user.walletBalance;
 
       if (addedBalance > 0) {
         // Razorpay payment
-        if (addedBalance < totalRequired) {
-          throw Exception("Payment insufficient. Required: ₹$totalRequired");
+        if (addedBalance < paymentNeeded && paymentNeeded > 0) {
+          throw Exception("Payment insufficient. Required: ₹$paymentNeeded");
         }
-        finalWalletBalance +=
-            addedBalance - 10.0; // Add deposit/topup, subtract rent
+        // Balance = current + added - rent - fineToClear
+        finalWalletBalance =
+            user.walletBalance + addedBalance - 10.0 - fineToClear;
+
+        // If they paid to reach 110, final balance should be 100 (after 10 rent)
+        if (addedBalance >= paymentNeeded) {
+          finalWalletBalance = 100.0;
+        }
       } else {
         // Wallet payment
-        if (finalWalletBalance < totalRequired) {
-          throw Exception("Insufficient balance for ₹$totalRequired");
+        if (finalWalletBalance < 110.0 || fineToClear > 0) {
+          if (finalWalletBalance < (110.0 + fineToClear)) {
+            throw Exception(
+              "Insufficient balance. Please top up to reach ₹110 after fines.",
+            );
+          }
         }
-        finalWalletBalance -=
-            10.0; // Only subtract rent if topup was already in wallet
+        finalWalletBalance -= (10.0 + fineToClear);
       }
 
       // Max 3 umbrellas at a time
@@ -162,17 +183,16 @@ class DatabaseService {
       transaction.update(userRef, {
         'activeRentalIds': FieldValue.arrayUnion([umbrellaId]),
         'walletBalance': finalWalletBalance,
-        'securityDeposit': finalWalletBalance.clamp(
-          0.0,
-          100.0,
-        ), // Keep for backward compat
-        'hasSecurityDeposit': finalWalletBalance >= 100.0,
+        'securityDeposit': 100.0, // Should be exactly 100 now if they paid up
+        'hasSecurityDeposit': true,
+        'fineAccumulated': 0.0, // Reset since it's paid/deducted now
       });
 
       // 7. Record Admin Earnings
       DocumentReference adminRef = _db.collection('admin').doc('stats');
       transaction.set(adminRef, {
-        'totalEarnings': FieldValue.increment(10.0),
+        'totalEarnings': FieldValue.increment(10.0), // Rent
+        'totalFineCollected': FieldValue.increment(fineToClear), // Paid Fines
       }, SetOptions(merge: true));
 
       // 8. Record Transactions
@@ -186,30 +206,55 @@ class DatabaseService {
         signature: signature,
         paymentLog: paymentLog,
         rentalAmount: 10.0,
-        status: 'success',
+        latitude: latitude,
+        longitude: longitude,
+        status: 'active',
         type: 'rental_fee',
         timestamp: DateTime.now(),
       );
       transaction.set(rentTransRef, rentTx.toMap());
 
-      if (addedBalance > 10.0 || topupNeeded > 0) {
-        double depositAmt = addedBalance > 0
-            ? (addedBalance - 10.0)
-            : topupNeeded;
-        DocumentReference depositTransRef = _transactionsCollection.doc();
-        TransactionModel depositTx = TransactionModel(
-          transactionId: depositTransRef.id,
-          userId: userId,
-          paymentId: paymentId,
-          orderId: orderId,
-          signature: signature,
-          paymentLog: paymentLog,
-          securityDeposit: depositAmt,
-          status: 'success',
-          type: 'deposit',
-          timestamp: DateTime.now(),
-        );
-        transaction.set(depositTransRef, depositTx.toMap());
+      if (addedBalance > 0 || fineToClear > 0) {
+        // Record fine payment if there was one
+        if (fineToClear > 0) {
+          DocumentReference finePayRef = _transactionsCollection.doc();
+          TransactionModel finePayTx = TransactionModel(
+            transactionId: finePayRef.id,
+            userId: userId,
+            paymentId: paymentId,
+            orderId: orderId,
+            signature: signature,
+            paymentLog: paymentLog,
+            penaltyAmount: fineToClear,
+            latitude: latitude,
+            longitude: longitude,
+            status: 'success',
+            type: 'fine_payment',
+            timestamp: DateTime.now(),
+          );
+          transaction.set(finePayRef, finePayTx.toMap());
+        }
+
+        // Record topup transaction if user paid more than rent + fine
+        double topupAmt = addedBalance - 10.0 - fineToClear;
+        if (topupAmt > 0) {
+          DocumentReference topupTransRef = _transactionsCollection.doc();
+          TransactionModel topupTx = TransactionModel(
+            transactionId: topupTransRef.id,
+            userId: userId,
+            paymentId: paymentId,
+            orderId: orderId,
+            signature: signature,
+            paymentLog: paymentLog,
+            rentalAmount: topupAmt,
+            latitude: latitude,
+            longitude: longitude,
+            status: 'success',
+            type: 'wallet_topup',
+            timestamp: DateTime.now(),
+          );
+          transaction.set(topupTransRef, topupTx.toMap());
+        }
       }
 
       return {'transactionId': rentTransRef.id, 'umbrellaId': umbrellaId};
@@ -266,7 +311,8 @@ class DatabaseService {
       transaction.update(userRef, {
         'hasSecurityDeposit': false,
         'redemptionStatus': 'completed',
-        // Wallet balance remains what it is, just marked as redeemed (refunded by admin)
+        'walletBalance': 0.0, // Reset balance as it's being refunded
+        'securityDeposit': 0.0,
       });
 
       // Record Refund Transaction
@@ -286,87 +332,117 @@ class DatabaseService {
 
   // --- Return Flow ---
 
-  Future<void> returnUmbrella({
+  Future<Map<String, dynamic>> processFullReturn({
     required String transactionId,
     required String userId,
     required String stationId,
     required String umbrellaId,
+    bool isDamaged = false,
+    String? damageType,
   }) async {
-    await _db.runTransaction((transaction) async {
-      // 1. Get Transaction to find start time
+    return await _db.runTransaction((transaction) async {
+      // 1. Get Rental Transaction
       DocumentReference originalTransRef = _transactionsCollection.doc(
         transactionId,
       );
       DocumentSnapshot originalTransSnap = await transaction.get(
         originalTransRef,
       );
-      if (!originalTransSnap.exists) {
-        throw Exception("Rental record not found");
-      }
+      if (!originalTransSnap.exists) throw Exception("Rental record not found");
 
       TransactionModel originalTx = TransactionModel.fromMap(
         originalTransSnap.data() as Map<String, dynamic>,
         originalTransSnap.id,
       );
 
-      // Calculate Penalty
-      final now = DateTime.now();
-      final diff = now.difference(originalTx.timestamp);
-      final elapsedHours = diff.inHours;
-      double penalty = 0.0;
-      if (elapsedHours > 10) {
-        penalty = (elapsedHours - 10) * 5.0;
+      if (originalTx.status == 'success') {
+        throw Exception("Rental already returned");
       }
 
-      // 2. Get Station
-      DocumentReference stationRef = _stationsCollection.doc(stationId);
-      DocumentSnapshot stationSnap = await transaction.get(stationRef);
-      if (!stationSnap.exists) throw Exception("Station not found");
+      // 2. Calculate Penalty (Server-side time using current session)
+      final now = DateTime.now();
+      final diff = now.difference(originalTx.timestamp);
+      final totalMinutes = diff.inMinutes;
+      double penalty = 0.0;
+      if (totalMinutes > 600) {
+        int overdueHours = (totalMinutes / 60.0).ceil() - 10;
+        penalty = overdueHours * 5.0;
+      }
 
-      // 3. Update Station (Append to FIFO queue)
-      transaction.update(stationRef, {
-        'queueOrder': FieldValue.arrayUnion([umbrellaId]),
-        'availableCount': FieldValue.increment(1),
-        'freeSlotsCount': FieldValue.increment(-1),
-      });
-
-      // 4. Update Umbrella
-      DocumentReference umbrellaRef = _umbrellasCollection.doc(umbrellaId);
-      transaction.update(umbrellaRef, {
-        'status': 'available',
-        'stationId': stationId,
-      });
-
-      // 5. Update User & Settle Penalty
+      // 3. Get User
       DocumentReference userRef = _usersCollection.doc(userId);
       DocumentSnapshot userSnap = await transaction.get(userRef);
       if (!userSnap.exists) throw Exception("User not found");
       UserModel user = UserModel.fromMap(
         userSnap.data() as Map<String, dynamic>,
       );
-      double finalWalletBalance = user.walletBalance;
 
-      if (penalty > 0) {
-        finalWalletBalance -= penalty;
+      // Verify user has this active rental
+      if (!user.activeRentalIds.contains(umbrellaId)) {
+        throw Exception("Umbrella not found in active rentals");
       }
+
+      // 4. Update Station (Append to end of queueOrder array)
+      DocumentReference stationRef = _stationsCollection.doc(stationId);
+      DocumentSnapshot stationSnap = await transaction.get(stationRef);
+      if (!stationSnap.exists) throw Exception("Station not found");
+
+      Station station = Station.fromMap(
+        stationSnap.data() as Map<String, dynamic>,
+        stationSnap.id,
+      );
+
+      // Atomic append using FieldValue.arrayUnion (only work if not exists,
+      // but in transaction we can safely build the list)
+      List<String> newQueue = List<String>.from(station.queueOrder);
+      if (!newQueue.contains(umbrellaId)) {
+        newQueue.add(umbrellaId);
+      }
+
+      // 5. Update All Docs
+      transaction.update(stationRef, {
+        'queueOrder': newQueue,
+        'availableCount': FieldValue.increment(1),
+        'freeSlotsCount': FieldValue.increment(-1),
+      });
 
       transaction.update(userRef, {
         'activeRentalIds': FieldValue.arrayRemove([umbrellaId]),
-        'walletBalance': finalWalletBalance,
-        'securityDeposit': finalWalletBalance.clamp(0.0, 100.0),
-        'hasSecurityDeposit': finalWalletBalance >= 100.0,
-        // Reset fine accumulated for this specific rental
-        'fineAccumulated': 0.0,
+        'walletBalance': FieldValue.increment(-penalty),
+        'securityDeposit': (user.walletBalance - penalty).clamp(0.0, 100.0),
+        'hasSecurityDeposit': (user.walletBalance - penalty) >= 100.0,
+        'fineAccumulated': 0.0, // Clear cache to force re-sync
       });
 
-      // 6. Record Admin Penalty Earnings
-      if (penalty > 0) {
-        DocumentReference adminRef = _db.collection('admin').doc('stats');
-        transaction.set(adminRef, {
-          'totalFineCollected': FieldValue.increment(penalty),
-        }, SetOptions(merge: true));
+      DocumentReference umbrellaRef = _umbrellasCollection.doc(umbrellaId);
+      transaction.update(umbrellaRef, {
+        'status': isDamaged ? 'damaged' : 'available',
+        'stationId': stationId,
+        'lastDamageReport': isDamaged ? damageType : null,
+      });
 
-        // 7. Record Penalty Transaction
+      transaction.update(originalTransRef, {
+        'status': 'success',
+        'penaltyAmount': penalty,
+        'returnTimestamp': FieldValue.serverTimestamp(),
+        'condition': isDamaged ? 'damaged' : 'ok',
+      });
+
+      // 6. Record Damage Report for Admin if applicable
+      if (isDamaged) {
+        DocumentReference damageRef = _db.collection('damage_reports').doc();
+        transaction.set(damageRef, {
+          'reportId': damageRef.id,
+          'umbrellaId': umbrellaId,
+          'userId': userId,
+          'type': damageType,
+          'timestamp': FieldValue.serverTimestamp(),
+          'status': 'pending_review',
+        });
+      }
+
+      // 7. Record Penalty Transaction if any
+      if (penalty > 0) {
         DocumentReference penaltyTransRef = _transactionsCollection.doc();
         TransactionModel penaltyTx = TransactionModel(
           transactionId: penaltyTransRef.id,
@@ -378,15 +454,43 @@ class DatabaseService {
           timestamp: DateTime.now(),
         );
         transaction.set(penaltyTransRef, penaltyTx.toMap());
+
+        DocumentReference adminRef = _db.collection('admin').doc('stats');
+        transaction.set(adminRef, {
+          'totalFineCollected': FieldValue.increment(penalty),
+        }, SetOptions(merge: true));
       }
 
-      // 8. Update original rental transaction
-      transaction.update(originalTransRef, {
-        'status': 'completed',
-        'penaltyAmount': penalty,
-        'returnTimestamp': FieldValue.serverTimestamp(),
-      });
+      // 8. Record Return Transaction (Success Record)
+      DocumentReference returnTransRef = _transactionsCollection.doc();
+      TransactionModel returnTx = TransactionModel(
+        transactionId: returnTransRef.id,
+        userId: userId,
+        umbrellaId: umbrellaId,
+        rentalAmount: 0.0,
+        status: 'success',
+        type: 'return',
+        timestamp: DateTime.now(),
+      );
+      transaction.set(returnTransRef, returnTx.toMap());
+
+      return {'penalty': penalty, 'duration': diff.inMinutes, 'timestamp': now};
     });
+  }
+
+  // Backward compatibility wrapper for old return flow
+  Future<void> returnUmbrella({
+    required String transactionId,
+    required String userId,
+    required String stationId,
+    required String umbrellaId,
+  }) async {
+    await processFullReturn(
+      transactionId: transactionId,
+      userId: userId,
+      stationId: stationId,
+      umbrellaId: umbrellaId,
+    );
   }
 
   /// Syncs fines for all active rentals of a user
@@ -402,8 +506,7 @@ class DatabaseService {
     final rentalsSnap = await _transactionsCollection
         .where('userId', isEqualTo: userId)
         .where('type', isEqualTo: 'rental_fee')
-        // Simplified: assuming we can find them. In production,
-        // handle multiple active rentals specifically.
+        // We filter status in-memory to avoid requiring a composite index
         .get();
 
     double totalNewFine = 0.0;
@@ -414,10 +517,21 @@ class DatabaseService {
         doc.data() as Map<String, dynamic>,
         doc.id,
       );
-      if (user.activeRentalIds.contains(tx.umbrellaId)) {
-        final elapsed = now.difference(tx.timestamp).inHours;
-        if (elapsed > 10) {
-          totalNewFine += (elapsed - 10) * 5.0;
+      if (user.activeRentalIds.contains(tx.umbrellaId) &&
+          (tx.status == 'active' || tx.status == 'late')) {
+        final totalMinutes = now.difference(tx.timestamp).inMinutes;
+        bool isLate = false;
+        if (totalMinutes > 600) {
+          int overdueHours = (totalMinutes / 60.0).ceil() - 10;
+          totalNewFine += overdueHours * 5.0;
+          isLate = true;
+        }
+
+        // Update transaction status to 'late' if it's overdue
+        if (isLate && tx.status == 'active') {
+          await _transactionsCollection.doc(tx.transactionId).update({
+            'status': 'late',
+          });
         }
       }
     }
@@ -432,32 +546,52 @@ class DatabaseService {
   Stream<List<TransactionModel>> getActiveRentalsStream(String userId) {
     return _transactionsCollection
         .where('userId', isEqualTo: userId)
-        .where('status', isEqualTo: 'success')
         .where('type', isEqualTo: 'rental_fee')
         .snapshots()
         .map((snapshot) {
-          return snapshot.docs.map((doc) {
-            return TransactionModel.fromMap(
-              doc.data() as Map<String, dynamic>,
-              doc.id,
-            );
-          }).toList();
+          return snapshot.docs
+              .map(
+                (doc) => TransactionModel.fromMap(
+                  doc.data() as Map<String, dynamic>,
+                  doc.id,
+                ),
+              )
+              .where((tx) => tx.status == 'active' || tx.status == 'late')
+              .toList();
         });
   }
 
   Stream<List<TransactionModel>> getTransactionsStream(String userId) {
     return _transactionsCollection
         .where('userId', isEqualTo: userId)
-        .orderBy('timestamp', descending: true)
         .snapshots()
         .map((snapshot) {
-          return snapshot.docs.map((doc) {
+          final list = snapshot.docs.map((doc) {
             return TransactionModel.fromMap(
               doc.data() as Map<String, dynamic>,
               doc.id,
             );
           }).toList();
+          // Sort in-memory to avoid requiring a composite index
+          list.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+          return list;
         });
+  }
+
+  Future<List<TransactionModel>> getUserTransactions(String userId) async {
+    final snapshot = await _transactionsCollection
+        .where('userId', isEqualTo: userId)
+        .get();
+
+    final list = snapshot.docs.map((doc) {
+      return TransactionModel.fromMap(
+        doc.data() as Map<String, dynamic>,
+        doc.id,
+      );
+    }).toList();
+
+    list.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return list;
   }
 
   Future<void> updateUmbrellaFromHardware({

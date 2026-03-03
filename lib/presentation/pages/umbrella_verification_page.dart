@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import 'dart:async';
 import 'home_page.dart';
 import '../../services/database_service.dart';
+import 'package:provider/provider.dart';
+import '../../providers/rental_provider.dart';
 
 class InspectionStep {
   final String title;
@@ -105,6 +107,8 @@ class _UmbrellaConditionVerificationPageState
     await Future.delayed(const Duration(milliseconds: 800));
 
     if (mounted) {
+      // Clear verification state
+      context.read<RentalProvider>().clearVerification();
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
           builder: (context) => const HomePage(initialIndex: 1),
@@ -135,6 +139,9 @@ class _UmbrellaConditionVerificationPageState
       );
 
       if (mounted) {
+        // Clear verification state
+        context.read<RentalProvider>().clearVerification();
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text("Umbrella returned successfully: $reason"),
@@ -158,8 +165,10 @@ class _UmbrellaConditionVerificationPageState
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
         final confirmed = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
@@ -183,7 +192,9 @@ class _UmbrellaConditionVerificationPageState
             ],
           ),
         );
-        return confirmed ?? false;
+        if (confirmed == true && context.mounted) {
+          Navigator.of(context).pop();
+        }
       },
       child: Scaffold(
         backgroundColor: Colors.white,
@@ -196,9 +207,12 @@ class _UmbrellaConditionVerificationPageState
                   child: Column(
                     children: [
                       _buildAnimationSection(),
+                      const SizedBox(height: 8),
                       _buildChecklistSection(),
                       _buildWarningCard(),
+                      const SizedBox(height: 16),
                       _buildReportButton(),
+                      const SizedBox(height: 20),
                     ],
                   ),
                 ),
@@ -240,7 +254,7 @@ class _UmbrellaConditionVerificationPageState
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
-              color: const Color(0xFF0066FF).withOpacity(0.1),
+              color: const Color(0xFF0066FF).withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(20),
             ),
             child: Text(
@@ -342,7 +356,7 @@ class _UmbrellaConditionVerificationPageState
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: value
-            ? const Color(0xFF0066FF).withOpacity(0.05)
+            ? const Color(0xFF0066FF).withValues(alpha: 0.05)
             : Colors.transparent,
         borderRadius: BorderRadius.circular(12),
       ),
@@ -356,7 +370,7 @@ class _UmbrellaConditionVerificationPageState
         controlAffinity: ListTileControlAffinity.leading,
         activeColor: const Color(0xFF0066FF),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        contentPadding: EdgeInsets.zero,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
       ),
     );
   }
@@ -366,7 +380,7 @@ class _UmbrellaConditionVerificationPageState
       margin: const EdgeInsets.symmetric(horizontal: 24),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.orange.withOpacity(0.08),
+        color: Colors.orange.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(16),
       ),
       child: Row(
@@ -413,7 +427,7 @@ class _UmbrellaConditionVerificationPageState
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 10,
             offset: const Offset(0, -5),
           ),
@@ -485,7 +499,7 @@ class _InspectionStepWidget extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.all(32),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF0066FF).withOpacity(0.05),
+                      color: const Color(0xFF0066FF).withValues(alpha: 0.05),
                       shape: BoxShape.circle,
                     ),
                     child: _buildAnimatedIcon(),
@@ -649,11 +663,11 @@ class _ScanningLightEffectState extends State<_ScanningLightEffect>
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
               colors: [
-                Colors.white.withOpacity(0.0),
-                const Color(
-                  0xFF0066FF,
-                ).withOpacity(0.2 * (1 - (_controller.value - 0.5).abs() * 2)),
-                Colors.white.withOpacity(0.0),
+                Colors.white.withValues(alpha: 0.0),
+                const Color(0xFF0066FF).withValues(
+                  alpha: 0.2 * (1 - (_controller.value - 0.5).abs() * 2),
+                ),
+                Colors.white.withValues(alpha: 0.0),
               ],
               stops: [
                 (_controller.value - 0.2).clamp(0.0, 1.0),
@@ -708,7 +722,7 @@ class _InspectionGlowState extends State<_InspectionGlow>
             border: Border.all(
               color: const Color(
                 0xFF0066FF,
-              ).withOpacity(0.3 * (1 - _controller.value)),
+              ).withValues(alpha: 0.3 * (1 - _controller.value)),
               width: 2,
             ),
           ),
@@ -779,7 +793,7 @@ class _ReportIssueBottomSheetState extends State<_ReportIssueBottomSheet> {
               groupValue: _selectedReason,
               onChanged: (v) => setState(() => _selectedReason = v),
               activeColor: Colors.red,
-              contentPadding: EdgeInsets.zero,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 8),
             ),
           ),
           const SizedBox(height: 32),
