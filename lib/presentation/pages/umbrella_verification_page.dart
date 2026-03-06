@@ -66,11 +66,43 @@ class _UmbrellaConditionVerificationPageState
   bool _checkedCanopy = false;
   bool _checkedFrame = false;
   bool _isProcessing = false;
+  int _remainingSeconds = 120; // 2 minutes timeout
+  Timer? _countdownTimer;
 
   @override
   void initState() {
     super.initState();
     _startAutoPlay();
+    _startCountdown();
+  }
+
+  void _startCountdown() {
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      setState(() {
+        if (_remainingSeconds > 0) {
+          _remainingSeconds--;
+        } else {
+          timer.cancel();
+          _autoConfirm();
+        }
+      });
+    });
+  }
+
+  void _autoConfirm() {
+    if (!_isProcessing) {
+      // Set all checks to true for auto-confirm
+      setState(() {
+        _checkedHandle = true;
+        _checkedCanopy = true;
+        _checkedFrame = true;
+      });
+      _handleConfirm();
+    }
   }
 
   void _startAutoPlay() {
@@ -93,6 +125,7 @@ class _UmbrellaConditionVerificationPageState
   @override
   void dispose() {
     _timer?.cancel();
+    _countdownTimer?.cancel();
     _pageController.dispose();
     super.dispose();
   }
@@ -251,19 +284,36 @@ class _UmbrellaConditionVerificationPageState
               ),
             ],
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0066FF).withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(
-              widget.umbrellaId,
-              style: GoogleFonts.outfit(
-                color: const Color(0xFF0066FF),
-                fontWeight: FontWeight.bold,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0052D1).withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  widget.umbrellaId,
+                  style: GoogleFonts.outfit(
+                    color: const Color(0xFF0052D1),
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
-            ),
+              const SizedBox(height: 4),
+              Text(
+                "Auto-confirm in ${_remainingSeconds ~/ 60}:${(_remainingSeconds % 60).toString().padLeft(2, '0')}",
+                style: GoogleFonts.outfit(
+                  fontSize: 12,
+                  color: _remainingSeconds < 30 ? Colors.red : Colors.grey[600],
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -295,7 +345,7 @@ class _UmbrellaConditionVerificationPageState
               height: 8,
               decoration: BoxDecoration(
                 color: _currentStep == index
-                    ? const Color(0xFF0066FF)
+                    ? const Color(0xFF0052D1)
                     : Colors.grey[300],
                 shape: BoxShape.circle,
               ),
@@ -356,7 +406,7 @@ class _UmbrellaConditionVerificationPageState
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: value
-            ? const Color(0xFF0066FF).withValues(alpha: 0.05)
+            ? const Color(0xFF0052D1).withValues(alpha: 0.05)
             : Colors.transparent,
         borderRadius: BorderRadius.circular(12),
       ),
@@ -368,7 +418,7 @@ class _UmbrellaConditionVerificationPageState
         },
         title: Text(text, style: GoogleFonts.outfit(fontSize: 15)),
         controlAffinity: ListTileControlAffinity.leading,
-        activeColor: const Color(0xFF0066FF),
+        activeColor: const Color(0xFF0052D1),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16),
       ),
@@ -439,7 +489,7 @@ class _UmbrellaConditionVerificationPageState
         child: ElevatedButton(
           onPressed: (_isAllChecked && !_isProcessing) ? _handleConfirm : null,
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF0066FF),
+            backgroundColor: const Color(0xFF0052D1),
             foregroundColor: Colors.white,
             disabledBackgroundColor: Colors.grey[200],
             shape: RoundedRectangleBorder(
@@ -499,8 +549,17 @@ class _InspectionStepWidget extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.all(32),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF0066FF).withValues(alpha: 0.05),
+                      color: Colors.white,
                       shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(
+                            0xFF0052D1,
+                          ).withValues(alpha: 0.08),
+                          blurRadius: 30,
+                          spreadRadius: 5,
+                        ),
+                      ],
                     ),
                     child: _buildAnimatedIcon(),
                   ),
@@ -540,7 +599,7 @@ class _InspectionStepWidget extends StatelessWidget {
     } else if (index == 1) {
       return _SlowRotationAnimation(icon: step.icon);
     }
-    return Icon(step.icon, size: 64, color: const Color(0xFF0066FF));
+    return Icon(step.icon, size: 64, color: const Color(0xFF0052D1));
   }
 
   Widget _buildScanningEffect() {
@@ -577,12 +636,60 @@ class _HandlePressAnimationState extends State<_HandlePressAnimation>
 
   @override
   Widget build(BuildContext context) {
-    return ScaleTransition(
-      scale: Tween(
-        begin: 1.0,
-        end: 0.85,
-      ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut)),
-      child: Icon(widget.icon, size: 64, color: const Color(0xFF0066FF)),
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            // Background ripple
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(
+                  0xFF0052D1,
+                ).withValues(alpha: 0.15 * (1 - _controller.value)),
+              ),
+            ),
+            // The Button/Handle
+            Transform.scale(
+              scale: 1.0 - (0.15 * _controller.value),
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF0052D1).withValues(alpha: 0.2),
+                      blurRadius: 15,
+                      spreadRadius: _controller.value * 5,
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  widget.icon,
+                  size: 40,
+                  color: const Color(0xFF0052D1),
+                ),
+              ),
+            ),
+            // Hand Indicator (Optional but good)
+            if (_controller.value > 0.5)
+              Positioned(
+                bottom: 0,
+                right: 0,
+                child: Icon(
+                  Icons.touch_app_rounded,
+                  size: 24,
+                  color: const Color(0xFF0052D1).withValues(alpha: 0.6),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }
@@ -618,7 +725,7 @@ class _SlowRotationAnimationState extends State<_SlowRotationAnimation>
   Widget build(BuildContext context) {
     return RotationTransition(
       turns: _controller,
-      child: Icon(widget.icon, size: 64, color: const Color(0xFF0066FF)),
+      child: Icon(widget.icon, size: 64, color: const Color(0xFF0052D1)),
     );
   }
 }
@@ -664,7 +771,7 @@ class _ScanningLightEffectState extends State<_ScanningLightEffect>
               end: Alignment.bottomCenter,
               colors: [
                 Colors.white.withValues(alpha: 0.0),
-                const Color(0xFF0066FF).withValues(
+                const Color(0xFF0052D1).withValues(
                   alpha: 0.2 * (1 - (_controller.value - 0.5).abs() * 2),
                 ),
                 Colors.white.withValues(alpha: 0.0),
@@ -721,7 +828,7 @@ class _InspectionGlowState extends State<_InspectionGlow>
             shape: BoxShape.circle,
             border: Border.all(
               color: const Color(
-                0xFF0066FF,
+                0xFF0052D1,
               ).withValues(alpha: 0.3 * (1 - _controller.value)),
               width: 2,
             ),
@@ -790,7 +897,9 @@ class _ReportIssueBottomSheetState extends State<_ReportIssueBottomSheet> {
             (reason) => RadioListTile<String>(
               title: Text(reason, style: GoogleFonts.outfit(fontSize: 16)),
               value: reason,
+              // ignore: deprecated_member_use
               groupValue: _selectedReason,
+              // ignore: deprecated_member_use
               onChanged: (v) => setState(() => _selectedReason = v),
               activeColor: Colors.red,
               contentPadding: const EdgeInsets.symmetric(horizontal: 8),

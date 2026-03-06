@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_options.dart';
-import 'services/database_service.dart';
 import 'presentation/pages/login_page.dart';
 import 'presentation/pages/umbrella_map_page.dart';
 import 'presentation/pages/login_details_page.dart';
@@ -63,10 +62,6 @@ class AuthWrapper extends StatefulWidget {
 }
 
 class _AuthWrapperState extends State<AuthWrapper> {
-  String? _lastUid;
-  bool? _userExists;
-  bool _isLoading = false;
-
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
@@ -79,8 +74,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
         final User? user = snapshot.data;
 
         if (user == null) {
-          _lastUid = null;
-          _userExists = null;
           return const LoginPage();
         }
 
@@ -89,47 +82,19 @@ class _AuthWrapperState extends State<AuthWrapper> {
           return const UmbrellaMapPage();
         }
 
-        // For regular users, check/cache existence
-        if (_lastUid != user.uid) {
-          _lastUid = user.uid;
-          _userExists = null;
-          _checkUserExists(user.uid);
-        }
+        // Use UserProvider for existence and data
+        final userProvider = context.watch<UserProvider>();
 
-        if (_isLoading || _userExists == null) {
+        if (userProvider.isLoading) {
           return const RainfallLoading();
         }
 
-        if (_userExists == true) {
+        if (userProvider.user != null) {
           return const HomePage();
         } else {
           return const LoginDetailsPage();
         }
       },
     );
-  }
-
-  Future<void> _checkUserExists(String uid) async {
-    // Avoid multiple concurrent checks
-    if (_isLoading) return;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) setState(() => _isLoading = true);
-    });
-
-    try {
-      final exists = await DatabaseService().userExists(uid);
-      if (!mounted) return;
-      setState(() {
-        _userExists = exists;
-        _isLoading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _userExists = false; // Default to registration on error
-        _isLoading = false;
-      });
-    }
   }
 }

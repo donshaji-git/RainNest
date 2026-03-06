@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_database/firebase_database.dart' hide Query;
 import '../data/models/user_model.dart';
 import '../data/models/station.dart';
 import '../data/models/umbrella.dart';
@@ -8,6 +9,7 @@ class DatabaseService {
   DatabaseService();
 
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseDatabase _rtdb = FirebaseDatabase.instance;
 
   // Collection References
   CollectionReference get _usersCollection => _db.collection('users');
@@ -79,18 +81,13 @@ class DatabaseService {
     if (!userSnap.exists) return 110.0;
     final user = UserModel.fromMap(userSnap.data() as Map<String, dynamic>);
 
-    // Unified: We want walletBalance to be at least 100 AFTER the 10 rent
-    // So total effectively 110. But we also must account for fines.
-    // effectiveBalance = currentBalance - fineAccumulated
-    // paymentNeeded = 110.0 - effectiveBalance
-    double effectiveBalance = user.walletBalance - user.fineAccumulated;
-    double paymentNeeded = (110.0 - effectiveBalance).clamp(0.0, 1000.0);
+    double fineToClear = user.fineAccumulated;
+    // We want the user to have 100 (deposit) + 10 (rent) after paying the fine
+    double paymentNeeded = (110.0 + fineToClear - user.walletBalance).clamp(
+      0.0,
+      1000.0,
+    );
 
-    // Minimum payment if they already have balance?
-    // If they have 150 balance and 0 fine, paymentNeeded = 110 - 150 = -40 -> clamp(0) = 0.
-    // But they still need to pay the 10 rent if we want to enforce it?
-    // Actually, if walletBalance >= 110, they can just rent.
-    // If walletBalance < 110, they pay the difference to reach 110.
     return paymentNeeded;
   }
 
@@ -115,36 +112,33 @@ class DatabaseService {
         userSnap.data() as Map<String, dynamic>,
       );
 
-      // Business Logic: Unified Balance to reach 110 (100 deposit + 10 rent)
+      // Business Logic: Unified Balance to reach 110 (100 deposit + 10 rent) + fines
       double fineToClear = user.fineAccumulated;
-      double effectiveBalance = user.walletBalance - fineToClear;
-      double paymentNeeded = (110.0 - effectiveBalance).clamp(0.0, 1000.0);
+      double paymentNeeded = (110.0 + fineToClear - user.walletBalance).clamp(
+        0.0,
+        1000.0,
+      );
 
       double finalWalletBalance = user.walletBalance;
 
       if (addedBalance > 0) {
-        // Razorpay payment
+        // Razorpay payment path
         if (addedBalance < paymentNeeded && paymentNeeded > 0) {
           throw Exception("Payment insufficient. Required: ₹$paymentNeeded");
         }
-        // Balance = current + added - rent - fineToClear
+        // Resulting balance = current + added - (rent + fine)
         finalWalletBalance =
             user.walletBalance + addedBalance - 10.0 - fineToClear;
-
-        // If they paid to reach 110, final balance should be 100 (after 10 rent)
-        if (addedBalance >= paymentNeeded) {
-          finalWalletBalance = 100.0;
-        }
       } else {
-        // Wallet payment
-        if (finalWalletBalance < 110.0 || fineToClear > 0) {
-          if (finalWalletBalance < (110.0 + fineToClear)) {
-            throw Exception(
-              "Insufficient balance. Please top up to reach ₹110 after fines.",
-            );
-          }
+        // Wallet payment path
+        // Ensure user has at least 110 + fines
+        double requiredTotal = 110.0 + fineToClear;
+        if (user.walletBalance < requiredTotal) {
+          throw Exception(
+            "Insufficient balance. Please top up to reach ₹110 after fines.",
+          );
         }
-        finalWalletBalance -= (10.0 + fineToClear);
+        finalWalletBalance = user.walletBalance - 10.0 - fineToClear;
       }
 
       // Max 3 umbrellas at a time
@@ -183,9 +177,9 @@ class DatabaseService {
       transaction.update(userRef, {
         'activeRentalIds': FieldValue.arrayUnion([umbrellaId]),
         'walletBalance': finalWalletBalance,
-        'securityDeposit': 100.0, // Should be exactly 100 now if they paid up
-        'hasSecurityDeposit': true,
-        'fineAccumulated': 0.0, // Reset since it's paid/deducted now
+        'securityDeposit': finalWalletBalance.clamp(0.0, 100.0),
+        'hasSecurityDeposit': finalWalletBalance >= 100.0,
+        'fineAccumulated': 0.0,
       });
 
       // 7. Record Admin Earnings
@@ -215,7 +209,30 @@ class DatabaseService {
       transaction.set(rentTransRef, rentTx.toMap());
 
       if (addedBalance > 0 || fineToClear > 0) {
-        // Record fine payment if there was one
+        // 1. Record the Razorpay payment as a top-up credit (MINUS the rental fee)
+        if (addedBalance > 0) {
+          double topupAmount = (addedBalance - 10.0).clamp(0.0, 1000.0);
+          if (topupAmount > 0) {
+            DocumentReference topupTransRef = _transactionsCollection.doc();
+            TransactionModel topupTx = TransactionModel(
+              transactionId: topupTransRef.id,
+              userId: userId,
+              paymentId: paymentId,
+              orderId: orderId,
+              signature: signature,
+              paymentLog: paymentLog,
+              rentalAmount: topupAmount,
+              latitude: latitude,
+              longitude: longitude,
+              status: 'success',
+              type: 'topup',
+              timestamp: DateTime.now(),
+            );
+            transaction.set(topupTransRef, topupTx.toMap());
+          }
+        }
+
+        // 2. Record fine payment if there was one
         if (fineToClear > 0) {
           DocumentReference finePayRef = _transactionsCollection.doc();
           TransactionModel finePayTx = TransactionModel(
@@ -229,31 +246,10 @@ class DatabaseService {
             latitude: latitude,
             longitude: longitude,
             status: 'success',
-            type: 'fine_payment',
+            type: 'penalty_payment',
             timestamp: DateTime.now(),
           );
           transaction.set(finePayRef, finePayTx.toMap());
-        }
-
-        // Record topup transaction if user paid more than rent + fine
-        double topupAmt = addedBalance - 10.0 - fineToClear;
-        if (topupAmt > 0) {
-          DocumentReference topupTransRef = _transactionsCollection.doc();
-          TransactionModel topupTx = TransactionModel(
-            transactionId: topupTransRef.id,
-            userId: userId,
-            paymentId: paymentId,
-            orderId: orderId,
-            signature: signature,
-            paymentLog: paymentLog,
-            rentalAmount: topupAmt,
-            latitude: latitude,
-            longitude: longitude,
-            status: 'success',
-            type: 'wallet_topup',
-            timestamp: DateTime.now(),
-          );
-          transaction.set(topupTransRef, topupTx.toMap());
         }
       }
 
@@ -299,9 +295,9 @@ class DatabaseService {
       if (user.redemptionRequestedAt != null) {
         final now = DateTime.now();
         final days = now.difference(user.redemptionRequestedAt!).inDays;
-        if (days < 5) {
+        if (days < 2) {
           throw Exception(
-            "Deposit can only be redeemed after 5 days of verification",
+            "Deposit can only be redeemed after 2 days of verification",
           );
         }
       } else {
@@ -327,6 +323,13 @@ class DatabaseService {
         timestamp: DateTime.now(),
       );
       transaction.set(transRef, t.toMap());
+    });
+  }
+
+  Future<void> cancelRedemption(String userId) async {
+    await _usersCollection.doc(userId).update({
+      'redemptionStatus': null,
+      'redemptionRequestedAt': null,
     });
   }
 
@@ -400,6 +403,12 @@ class DatabaseService {
       }
 
       // 5. Update All Docs
+      double newWalletBalance = (user.walletBalance - penalty).clamp(
+        0.0,
+        1000.0,
+      );
+      double remainingFine = (penalty - user.walletBalance).clamp(0.0, 1000.0);
+
       transaction.update(stationRef, {
         'queueOrder': newQueue,
         'availableCount': FieldValue.increment(1),
@@ -408,10 +417,11 @@ class DatabaseService {
 
       transaction.update(userRef, {
         'activeRentalIds': FieldValue.arrayRemove([umbrellaId]),
-        'walletBalance': FieldValue.increment(-penalty),
-        'securityDeposit': (user.walletBalance - penalty).clamp(0.0, 100.0),
-        'hasSecurityDeposit': (user.walletBalance - penalty) >= 100.0,
-        'fineAccumulated': 0.0, // Clear cache to force re-sync
+        'walletBalance': newWalletBalance,
+        'coins': FieldValue.increment(penalty == 0 ? 10 : 0),
+        'securityDeposit': newWalletBalance.clamp(0.0, 100.0),
+        'hasSecurityDeposit': newWalletBalance >= 100.0,
+        'fineAccumulated': remainingFine,
       });
 
       DocumentReference umbrellaRef = _umbrellasCollection.doc(umbrellaId);
@@ -428,7 +438,37 @@ class DatabaseService {
         'condition': isDamaged ? 'damaged' : 'ok',
       });
 
-      // 6. Record Damage Report for Admin if applicable
+      // Record penalty transaction for history if fine exists
+      if (penalty > 0) {
+        DocumentReference penaltyTxRef = _transactionsCollection.doc();
+        TransactionModel penaltyTx = TransactionModel(
+          transactionId: penaltyTxRef.id,
+          userId: userId,
+          umbrellaId: umbrellaId,
+          penaltyAmount: penalty,
+          status: 'success',
+          type: 'penalty',
+          timestamp: DateTime.now(),
+        );
+        transaction.set(penaltyTxRef, penaltyTx.toMap());
+      }
+
+      // 6. Record Coin Reward Transaction
+      if (penalty == 0) {
+        DocumentReference coinTxRef = _transactionsCollection.doc();
+        TransactionModel coinTx = TransactionModel(
+          transactionId: coinTxRef.id,
+          userId: userId,
+          umbrellaId: umbrellaId,
+          coins: 10,
+          status: 'success',
+          type: 'coin_reward',
+          timestamp: DateTime.now(),
+        );
+        transaction.set(coinTxRef, coinTx.toMap());
+      }
+
+      // 7. Record Damage Report for Admin if applicable
       if (isDamaged) {
         DocumentReference damageRef = _db.collection('damage_reports').doc();
         transaction.set(damageRef, {
@@ -606,6 +646,7 @@ class DatabaseService {
       // Create new umbrella
       Umbrella newUmbrella = Umbrella(
         umbrellaId: umbrellaId,
+        resistance: double.tryParse(umbrellaId) ?? 0.0,
         stationId: stationId,
         status: status,
         createdAt: DateTime.now(),
@@ -617,8 +658,18 @@ class DatabaseService {
     }
   }
 
-  Future<void> addStation(Station station) async {
-    await _stationsCollection.add(station.toMap());
+  Future<bool> isQrCodeUnique(String qrCode, {String? excludeStationId}) async {
+    Query query = _stationsCollection.where('machineQrCode', isEqualTo: qrCode);
+    final snapshot = await query.get();
+
+    if (excludeStationId != null) {
+      return snapshot.docs.where((doc) => doc.id != excludeStationId).isEmpty;
+    }
+    return snapshot.docs.isEmpty;
+  }
+
+  Future<DocumentReference> addStation(Station station) async {
+    return await _stationsCollection.add(station.toMap());
   }
 
   Future<void> updateStation(Station station) async {
@@ -630,7 +681,14 @@ class DatabaseService {
   }
 
   Future<void> saveUmbrella(Umbrella umbrella) async {
+    // 1. Write to Firestore
     await _umbrellasCollection.doc(umbrella.umbrellaId).set(umbrella.toMap());
+
+    // 2. Write Resistance to RTDB for NodeMCU (Registry)
+    await _rtdb.ref('umbrella_registry/${umbrella.umbrellaId}').set({
+      'id': umbrella.umbrellaId,
+      'res': umbrella.resistance,
+    });
   }
 
   Future<List<Station>> getAllStations() async {
@@ -638,5 +696,51 @@ class DatabaseService {
     return snap.docs.map((doc) {
       return Station.fromMap(doc.data() as Map<String, dynamic>, doc.id);
     }).toList();
+  }
+
+  Future<Map<int, Map<String, double>>> getMonthlyRentalStats(
+    int month,
+    int year,
+  ) async {
+    final start = DateTime(year, month, 1);
+    final nextMonth = month == 12 ? 1 : month + 1;
+    final nextYear = month == 12 ? year + 1 : year;
+    final end = DateTime(nextYear, nextMonth, 1);
+
+    final snapshot = await _transactionsCollection
+        .where('timestamp', isGreaterThanOrEqualTo: start)
+        .where('timestamp', isLessThan: end)
+        .get();
+
+    // Map to store daily totals: {day: {'revenue': 0.0, 'fines': 0.0, 'security': 0.0}}
+    Map<int, Map<String, double>> dailyStats = {};
+
+    for (var doc in snapshot.docs) {
+      final tx = TransactionModel.fromMap(
+        doc.data() as Map<String, dynamic>,
+        doc.id,
+      );
+
+      final day = tx.timestamp.day;
+      if (!dailyStats.containsKey(day)) {
+        dailyStats[day] = {'revenue': 0.0, 'fines': 0.0, 'security': 0.0};
+      }
+
+      if (tx.type == 'rental_fee') {
+        dailyStats[day]!['revenue'] =
+            (dailyStats[day]!['revenue'] ?? 0.0) + tx.rentalAmount;
+      } else if (tx.type == 'penalty_payment' || tx.type == 'penalty') {
+        // penalty_payment is the actual collection, penalty is the record
+        dailyStats[day]!['fines'] =
+            (dailyStats[day]!['fines'] ?? 0.0) +
+            (tx.penaltyAmount > 0 ? tx.penaltyAmount : 0);
+      } else if (tx.type == 'topup') {
+        // Security is the amount added to wallet (deposit)
+        dailyStats[day]!['security'] =
+            (dailyStats[day]!['security'] ?? 0.0) + tx.rentalAmount;
+      }
+    }
+
+    return dailyStats;
   }
 }

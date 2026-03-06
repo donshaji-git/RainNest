@@ -13,6 +13,7 @@ class UserModel {
   final bool hasSecurityDeposit;
   final DateTime? securityDepositDate;
   final List<String> activeRentalIds;
+  final int coins;
   final DateTime? redemptionRequestedAt;
   final String redemptionStatus;
   final DateTime createdAt;
@@ -30,6 +31,7 @@ class UserModel {
     this.hasSecurityDeposit = false,
     this.securityDepositDate,
     this.activeRentalIds = const [],
+    this.coins = 0,
     this.redemptionRequestedAt,
     this.redemptionStatus = 'none',
     required this.createdAt,
@@ -51,6 +53,7 @@ class UserModel {
       address: data['address'] ?? '',
       pinCode: data['pinCode'] ?? '',
       activeRentalIds: List<String>.from(data['activeRentalIds'] ?? []),
+      coins: data['coins'] ?? 0,
       redemptionRequestedAt: (data['redemptionRequestedAt'] is Timestamp)
           ? (data['redemptionRequestedAt'] as Timestamp).toDate()
           : null,
@@ -77,6 +80,7 @@ class UserModel {
       'address': address,
       'pinCode': pinCode,
       'activeRentalIds': activeRentalIds,
+      'coins': coins,
       'redemptionRequestedAt': redemptionRequestedAt != null
           ? Timestamp.fromDate(redemptionRequestedAt!)
           : null,

@@ -11,10 +11,12 @@ class TransactionModel {
   final double rentalAmount;
   final double securityDeposit;
   final double penaltyAmount;
+  final int? coins;
   final double? latitude;
   final double? longitude;
   final String status; // 'success', 'failed', 'pending'
-  final String type; // 'payment', 'rental_fee', 'deposit', 'refund', 'penalty'
+  final String
+  type; // 'payment', 'rental_fee', 'deposit', 'refund', 'penalty', 'coin_reward'
   final DateTime timestamp;
 
   TransactionModel({
@@ -28,6 +30,7 @@ class TransactionModel {
     this.rentalAmount = 0.0,
     this.securityDeposit = 0.0,
     this.penaltyAmount = 0.0,
+    this.coins,
     this.latitude,
     this.longitude,
     required this.status,
@@ -47,6 +50,7 @@ class TransactionModel {
       'rentalAmount': rentalAmount,
       'securityDeposit': securityDeposit,
       'penaltyAmount': penaltyAmount,
+      'coins': coins,
       'latitude': latitude,
       'longitude': longitude,
       'status': status,
@@ -69,6 +73,7 @@ class TransactionModel {
       rentalAmount: (data['rentalAmount'] as num?)?.toDouble() ?? 0.0,
       securityDeposit: (data['securityDeposit'] as num?)?.toDouble() ?? 0.0,
       penaltyAmount: (data['penaltyAmount'] as num?)?.toDouble() ?? 0.0,
+      coins: data['coins'] as int?,
       latitude: (data['latitude'] as num?)?.toDouble(),
       longitude: (data['longitude'] as num?)?.toDouble(),
       status: data['status'] ?? 'pending',

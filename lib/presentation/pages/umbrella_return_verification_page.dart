@@ -65,11 +65,43 @@ class _UmbrellaReturnVerificationPageState
   bool _checkedCanopy = false;
   bool _checkedFrame = false;
   bool _isProcessing = false;
+  int _remainingSeconds = 120; // 2 minutes timeout
+  Timer? _countdownTimer;
 
   @override
   void initState() {
     super.initState();
     _startAutoPlay();
+    _startCountdown();
+  }
+
+  void _startCountdown() {
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      setState(() {
+        if (_remainingSeconds > 0) {
+          _remainingSeconds--;
+        } else {
+          timer.cancel();
+          _autoReturn();
+        }
+      });
+    });
+  }
+
+  void _autoReturn() {
+    if (!_isProcessing) {
+      // Set all checks to true for auto-return
+      setState(() {
+        _checkedHandle = true;
+        _checkedCanopy = true;
+        _checkedFrame = true;
+      });
+      _handleReturn();
+    }
   }
 
   void _startAutoPlay() {
@@ -92,6 +124,7 @@ class _UmbrellaReturnVerificationPageState
   @override
   void dispose() {
     _timer?.cancel();
+    _countdownTimer?.cancel();
     _pageController.dispose();
     super.dispose();
   }
@@ -188,7 +221,18 @@ class _UmbrellaReturnVerificationPageState
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: Text("Post-Usage Inspection", style: GoogleFonts.outfit()),
+        title: Column(
+          children: [
+            Text("Post-Usage Inspection", style: GoogleFonts.outfit()),
+            Text(
+              "Auto-confirm in ${_remainingSeconds ~/ 60}:${(_remainingSeconds % 60).toString().padLeft(2, '0')}",
+              style: GoogleFonts.outfit(
+                fontSize: 12,
+                color: _remainingSeconds < 30 ? Colors.red : Colors.grey[600],
+              ),
+            ),
+          ],
+        ),
         centerTitle: true,
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
@@ -246,7 +290,7 @@ class _UmbrellaReturnVerificationPageState
               height: 8,
               decoration: BoxDecoration(
                 color: _currentStep == index
-                    ? const Color(0xFF0066FF)
+                    ? const Color(0xFF0052D1)
                     : Colors.grey[300],
                 borderRadius: BorderRadius.circular(4),
               ),
@@ -310,7 +354,7 @@ class _UmbrellaReturnVerificationPageState
         onChanged(v);
       },
       title: Text(text, style: GoogleFonts.outfit(fontSize: 16)),
-      activeColor: const Color(0xFF0066FF),
+      activeColor: const Color(0xFF0052D1),
       controlAffinity: ListTileControlAffinity.leading,
       contentPadding: const EdgeInsets.symmetric(horizontal: 16),
     );
@@ -352,7 +396,7 @@ class _UmbrellaReturnVerificationPageState
         child: ElevatedButton(
           onPressed: (_isAllChecked && !_isProcessing) ? _handleReturn : null,
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF0066FF),
+            backgroundColor: const Color(0xFF0052D1),
             foregroundColor: Colors.white,
             disabledBackgroundColor: Colors.grey[200],
             shape: RoundedRectangleBorder(
@@ -403,7 +447,7 @@ class _ReturnInspectionStepWidget extends StatelessWidget {
                 Icon(
                   step.icon,
                   size: 80,
-                  color: const Color(0xFF0066FF).withValues(alpha: 0.8),
+                  color: const Color(0xFF0052D1).withValues(alpha: 0.8),
                 ),
                 if (index == 1) _ScanningLightOverlay(),
               ],
@@ -458,21 +502,42 @@ class _HandleGlowAnimationState extends State<_HandleGlowAnimation>
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
-        return Container(
-          width: 100 + (40 * _controller.value),
-          height: 100 + (40 * _controller.value),
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: const Color(
-                  0xFF0066FF,
-                ).withValues(alpha: 0.3 * (1 - _controller.value)),
-                blurRadius: 20,
-                spreadRadius: 10,
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            Container(
+              width: 100 + (40 * _controller.value),
+              height: 100 + (40 * _controller.value),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: const Color(
+                    0xFF0052D1,
+                  ).withValues(alpha: 0.3 * (1 - _controller.value)),
+                  width: 2,
+                ),
               ),
-            ],
-          ),
+            ),
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF0052D1).withValues(alpha: 0.1),
+                    blurRadius: 20,
+                    spreadRadius: 5,
+                  ),
+                ],
+              ),
+              child: Icon(
+                Icons.pan_tool_alt_rounded,
+                size: 48,
+                color: const Color(0xFF0052D1),
+              ),
+            ),
+          ],
         );
       },
     );
@@ -504,19 +569,31 @@ class _CanopyZoomAnimationState extends State<_CanopyZoomAnimation>
 
   @override
   Widget build(BuildContext context) {
-    return ScaleTransition(
-      scale: Tween(
-        begin: 1.0,
-        end: 1.3,
-      ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut)),
-      child: Container(
-        width: 120,
-        height: 120,
-        decoration: BoxDecoration(
-          color: const Color(0xFF0066FF).withValues(alpha: 0.05),
-          shape: BoxShape.circle,
-        ),
-      ),
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            Transform.scale(
+              scale: 1.0 + (0.3 * _controller.value),
+              child: Container(
+                width: 120,
+                height: 120,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0052D1).withValues(alpha: 0.05),
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+            const Icon(
+              Icons.umbrella_rounded,
+              size: 64,
+              color: Color(0xFF0052D1),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -557,7 +634,7 @@ class _ScanningLightOverlayState extends State<_ScanningLightOverlay>
             decoration: BoxDecoration(
               boxShadow: [
                 BoxShadow(
-                  color: const Color(0xFF0066FF).withValues(alpha: 0.8),
+                  color: const Color(0xFF0052D1).withValues(alpha: 0.8),
                   blurRadius: 8,
                   spreadRadius: 1,
                 ),
@@ -605,7 +682,7 @@ class _FrameHighlightAnimationState extends State<_FrameHighlightAnimation>
           decoration: BoxDecoration(
             border: Border.all(
               color: const Color(
-                0xFF0066FF,
+                0xFF0052D1,
               ).withValues(alpha: 0.5 * _controller.value),
               width: 3,
             ),
@@ -665,7 +742,9 @@ class _DamageReportBottomSheetState extends State<_DamageReportBottomSheet> {
             (t) => RadioListTile<String>(
               title: Text(t, style: GoogleFonts.outfit()),
               value: t,
+              // ignore: deprecated_member_use
               groupValue: _selected,
+              // ignore: deprecated_member_use
               onChanged: (v) => setState(() => _selected = v),
               activeColor: Colors.red,
             ),

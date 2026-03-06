@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import '../auth/google_auth.dart';
 
 class AuthService {
@@ -60,8 +61,19 @@ class AuthService {
     await _auth.sendPasswordResetEmail(email: email);
   }
 
-  Future<void> signOut() async {
-    await _auth.signOut();
-    await GoogleAuthService.signOut();
+  Future<void> signOut() {
+    // Run both sign-outs concurrently without awaiting them sequentially
+    // Use ignore for the futures as navigation will handle UI transition
+    try {
+      Future.wait([_auth.signOut(), GoogleAuthService.signOut()]).catchError((
+        e,
+      ) {
+        debugPrint("SignOut Error: $e");
+        return [];
+      });
+    } catch (e) {
+      debugPrint("Immediate SignOut Error: $e");
+    }
+    return Future.value();
   }
 }

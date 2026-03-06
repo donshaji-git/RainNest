@@ -1,49 +1,47 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import '../../services/database_service.dart';
+import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
 import '../../data/models/user_model.dart';
+import '../../providers/user_provider.dart';
+import 'login_page.dart';
 
 class ProfilePage extends StatelessWidget {
   const ProfilePage({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
+    final userProvider = context.watch<UserProvider>();
+    final userData = userProvider.user;
+
+    if (userProvider.isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final String name = userData?.name ?? "Guest User";
+    final String phone = userData?.phoneNumber ?? "No Phone Number";
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFF),
-      body: FutureBuilder<UserModel?>(
-        future: user != null
-            ? DatabaseService().getUser(user.uid)
-            : Future.value(null),
-        builder: (context, snapshot) {
-          final userData = snapshot.data;
-          final String name = userData?.name ?? "Guest User";
-          final String phone = userData?.phoneNumber ?? "No Phone Number";
-
-          return SingleChildScrollView(
-            child: Column(
-              children: [
-                const SizedBox(height: 60),
-                _buildHeader(name, phone),
-                const SizedBox(height: 24),
-                _buildStatsSection(),
-                const SizedBox(height: 24),
-                _buildFinanceSection(context),
-                const SizedBox(height: 24),
-                _buildPartnerCard(context),
-                const SizedBox(height: 24),
-                _buildSettingsSection(context),
-                const SizedBox(height: 24),
-                _buildLogoutButton(context),
-                const SizedBox(height: 40),
-              ],
-            ),
-          );
-        },
+      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            const SizedBox(height: 60),
+            _buildHeader(name, phone),
+            const SizedBox(height: 24),
+            _buildStatsSection(userData),
+            const SizedBox(height: 24),
+            _buildFinanceSection(context, userData),
+            const SizedBox(height: 24),
+            _buildPartnerCard(context),
+            const SizedBox(height: 24),
+            _buildSettingsSection(context),
+            const SizedBox(height: 24),
+            _buildLogoutButton(context),
+            const SizedBox(height: 40),
+          ],
+        ),
       ),
     );
   }
@@ -94,7 +92,7 @@ class ProfilePage extends StatelessWidget {
     );
   }
 
-  Widget _buildStatsSection() {
+  Widget _buildStatsSection(UserModel? userData) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Container(
@@ -112,9 +110,17 @@ class ProfilePage extends StatelessWidget {
         ),
         child: Row(
           children: [
-            _buildStatItem("12", "RENTALS", Icons.umbrella_rounded),
+            _buildStatItem(
+              userData?.activeRentalIds.length.toString() ?? "0",
+              "RENTALS",
+              Icons.umbrella_rounded,
+            ),
             Container(height: 40, width: 1, color: Colors.grey[100]),
-            _buildStatItem("450", "CREDITS", Icons.toll_rounded),
+            _buildStatItem(
+              userData?.coins.toString() ?? "0",
+              "COINS",
+              Icons.toll_rounded,
+            ),
           ],
         ),
       ),
@@ -149,7 +155,7 @@ class ProfilePage extends StatelessWidget {
     );
   }
 
-  Widget _buildFinanceSection(BuildContext context) {
+  Widget _buildFinanceSection(BuildContext context, UserModel? userData) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Column(
@@ -193,7 +199,8 @@ class ProfilePage extends StatelessWidget {
                 _buildMenuTile(
                   icon: Icons.account_balance_wallet_rounded,
                   title: "Wallet & Deposit",
-                  subtitle: "Refundable: \$15.00",
+                  subtitle:
+                      "Refundable: ₹${userData?.walletBalance.toStringAsFixed(2) ?? "0.00"}",
                   subtitleColor: Colors.green,
                   onTap: () {},
                 ),
@@ -381,7 +388,15 @@ class ProfilePage extends StatelessWidget {
         child: Material(
           color: Colors.transparent,
           child: InkWell(
-            onTap: () => AuthService().signOut(),
+            onTap: () {
+              // Trigger sign-out in background
+              AuthService().signOut();
+              // Navigate immediately for instantaneous feel
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (context) => const LoginPage()),
+                (route) => false,
+              );
+            },
             borderRadius: BorderRadius.circular(24),
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 16),

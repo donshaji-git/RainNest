@@ -104,7 +104,7 @@ class _WalletPageState extends State<WalletPage> {
       if (user.redemptionRequestedAt != null) {
         final now = DateTime.now();
         final diff = now.difference(user.redemptionRequestedAt!);
-        final remainingDays = 5 - diff.inDays;
+        final remainingDays = 2 - diff.inDays;
         redeemButtonText = remainingDays <= 0
             ? "Process Refund"
             : "Pending ($remainingDays days)";
@@ -143,27 +143,75 @@ class _WalletPageState extends State<WalletPage> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                "Total Balance",
+                "Refundable Balance",
                 style: GoogleFonts.outfit(
                   color: Colors.white.withValues(alpha: 0.8),
                   fontSize: 16,
                 ),
               ),
-              Icon(
-                Icons.account_balance_rounded,
-                color: Colors.white.withValues(alpha: 0.8),
+              const Icon(
+                Icons.account_balance_wallet_rounded,
+                color: Colors.white,
               ),
             ],
           ),
           const SizedBox(height: 10),
-          Text(
-            "₹${totalBalance.toStringAsFixed(2)}",
-            style: GoogleFonts.outfit(
-              color: Colors.white,
-              fontSize: 40,
-              fontWeight: FontWeight.bold,
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(
+                "₹${totalBalance.toStringAsFixed(0)}",
+                style: GoogleFonts.outfit(
+                  color: Colors.white,
+                  fontSize: 48,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (totalBalance >= 100)
+                Text(
+                  "(Includes ₹100 Security)",
+                  style: GoogleFonts.outfit(
+                    color: Colors.white.withValues(alpha: 0.7),
+                    fontSize: 14,
+                  ),
+                ),
+            ],
           ),
+          if (user.hasSecurityDeposit)
+            Padding(
+              padding: const EdgeInsets.only(top: 12.0),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.verified_user_rounded,
+                      color: Colors.white,
+                      size: 14,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      "Security Deposit: ₹100 (Held)",
+                      style: GoogleFonts.outfit(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           if (user.fineAccumulated > 0)
             Padding(
               padding: const EdgeInsets.only(top: 8.0),
@@ -177,7 +225,7 @@ class _WalletPageState extends State<WalletPage> {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  "Includes ₹${user.fineAccumulated.toStringAsFixed(2)} fine due",
+                  "Outstanding Fine: ₹${user.fineAccumulated.toStringAsFixed(2)}",
                   style: GoogleFonts.outfit(
                     color: Colors.white,
                     fontSize: 12,
@@ -247,7 +295,15 @@ class _WalletPageState extends State<WalletPage> {
                   return const Center(child: CircularProgressIndicator());
                 }
 
-                final transactions = snapshot.data ?? [];
+                // Filter out ₹0 return transactions that don't award coins
+                final transactions = (snapshot.data ?? []).where((tx) {
+                  if (tx.type == 'return' &&
+                      tx.rentalAmount == 0 &&
+                      (tx.coins ?? 0) == 0) {
+                    return false;
+                  }
+                  return true;
+                }).toList();
 
                 if (transactions.isEmpty) {
                   return Center(
@@ -274,7 +330,8 @@ class _WalletPageState extends State<WalletPage> {
                     final isCredit =
                         tx.type == 'refund' ||
                         tx.type == 'topup' ||
-                        tx.type == 'return';
+                        tx.type == 'return' ||
+                        tx.type == 'coin_reward';
                     final isDebit =
                         tx.type == 'rental_fee' ||
                         tx.type == 'deposit' ||
@@ -284,13 +341,16 @@ class _WalletPageState extends State<WalletPage> {
                     final title = _getTransactionTitle(tx.type);
 
                     // Pick the correct amount field
-                    double amount = 0;
-                    if (tx.type == 'deposit' || tx.type == 'refund') {
-                      amount = tx.securityDeposit;
-                    } else if (tx.type == 'penalty') {
-                      amount = tx.penaltyAmount;
+                    String amountText = "";
+                    if (tx.type == 'coin_reward') {
+                      amountText = "${tx.coins} Coins";
+                    } else if (tx.type == 'deposit' || tx.type == 'refund') {
+                      amountText = "₹${tx.securityDeposit.toStringAsFixed(0)}";
+                    } else if (tx.type == 'penalty' ||
+                        tx.type == 'penalty_payment') {
+                      amountText = "₹${tx.penaltyAmount.toStringAsFixed(0)}";
                     } else {
-                      amount = tx.rentalAmount;
+                      amountText = "₹${tx.rentalAmount.toStringAsFixed(0)}";
                     }
 
                     final dateStr = DateFormat(
@@ -308,6 +368,11 @@ class _WalletPageState extends State<WalletPage> {
                         ? Colors.red
                         : Colors.orange;
                     final sign = isCredit ? '+' : '-';
+                    final icon = tx.type == 'coin_reward'
+                        ? Icons.toll_rounded
+                        : (isCredit
+                              ? Icons.arrow_downward_rounded
+                              : Icons.arrow_upward_rounded);
 
                     return Container(
                       padding: const EdgeInsets.all(14),
@@ -331,13 +396,7 @@ class _WalletPageState extends State<WalletPage> {
                               color: color.withValues(alpha: 0.1),
                               shape: BoxShape.circle,
                             ),
-                            child: Icon(
-                              isCredit
-                                  ? Icons.arrow_downward_rounded
-                                  : Icons.arrow_upward_rounded,
-                              color: color,
-                              size: 18,
-                            ),
+                            child: Icon(icon, color: color, size: 18),
                           ),
                           const SizedBox(width: 14),
                           Expanded(
@@ -363,7 +422,7 @@ class _WalletPageState extends State<WalletPage> {
                             ),
                           ),
                           Text(
-                            "$sign₹${amount.toStringAsFixed(0)}",
+                            "$sign$amountText",
                             style: GoogleFonts.outfit(
                               fontWeight: FontWeight.bold,
                               fontSize: 16,
@@ -399,6 +458,8 @@ class _WalletPageState extends State<WalletPage> {
         return "Late Return Fine";
       case 'penalty_payment':
         return "Fine Payment";
+      case 'coin_reward':
+        return "Reward: Rental Return";
       default:
         return "Transaction";
     }
@@ -411,7 +472,7 @@ class _WalletPageState extends State<WalletPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              "Refund request submitted! It will be verified within 5 days.",
+              "Refund request submitted! It will be verified within 2 days.",
             ),
           ),
         );

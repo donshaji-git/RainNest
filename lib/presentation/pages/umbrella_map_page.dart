@@ -12,8 +12,11 @@ import '../../services/location_service.dart';
 import '../constants/admin_constants.dart';
 import '../../providers/location_provider.dart';
 import '../../providers/map_provider.dart';
+import 'login_page.dart';
 import 'dart:ui';
 import '../widgets/rain_nest_loader.dart';
+import 'package:fl_chart/fl_chart.dart';
+import 'package:intl/intl.dart';
 
 class UmbrellaMapPage extends StatefulWidget {
   const UmbrellaMapPage({super.key});
@@ -28,10 +31,20 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
   bool _firstLocationFixed = false;
   LocationProvider? _locationProvider;
 
+  // Analytics state
+  int _selectedMonth = DateTime.now().month;
+  final int _selectedYear = DateTime.now().year;
+  Map<int, Map<String, double>> _monthlyStats = {};
+  bool _isLoadingStats = false;
+
   @override
   void initState() {
     super.initState();
     _checkAdminStatus();
+    // Defer stats fetching and location initialization to prioritize initial frame build
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (mounted) _fetchStats();
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initialize();
     });
@@ -75,8 +88,33 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
     });
   }
 
-  void _logout() async {
-    await AuthService().signOut();
+  void _fetchStats() async {
+    setState(() => _isLoadingStats = true);
+    try {
+      final stats = await _db.getMonthlyRentalStats(
+        _selectedMonth,
+        _selectedYear,
+      );
+      setState(() {
+        _monthlyStats = stats;
+        _isLoadingStats = false;
+      });
+    } catch (e) {
+      setState(() => _isLoadingStats = false);
+      debugPrint("Error fetching stats: $e");
+    }
+  }
+
+  void _logout() {
+    // Trigger sign-out in background
+    AuthService().signOut();
+    // Navigate immediately for instantaneous feel
+    if (mounted) {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => const LoginPage()),
+        (route) => false,
+      );
+    }
   }
 
   void _manageMachine({LatLng? point, Station? existingStation}) async {
@@ -100,6 +138,7 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
       text: existingStation?.machineQrCode ?? "",
     );
 
+    bool isSaving = false;
     showDialog(
       context: context,
       builder: (context) {
@@ -162,62 +201,113 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
                   child: const Text("Cancel"),
                 ),
                 ElevatedButton(
-                  onPressed: () async {
-                    if (nameController.text.isEmpty ||
-                        slotCountController.text.isEmpty ||
-                        qrController.text.isEmpty) {
-                      return;
-                    }
-                    final totalSlots =
-                        int.tryParse(slotCountController.text) ?? 0;
-                    final queue = queueController.text
-                        .split(",")
-                        .map((e) => e.trim())
-                        .where((e) => e.isNotEmpty)
-                        .toList();
+                  onPressed: isSaving
+                      ? null
+                      : () async {
+                          final name = nameController.text.trim();
+                          final qr = qrController.text.trim();
+                          final desc = descController.text.trim();
+                          final slotsText = slotCountController.text.trim();
 
-                    final station = Station(
-                      stationId: existingStation?.stationId ?? '',
-                      name: nameController.text,
-                      description: descController.text,
-                      latitude: existingStation?.latitude ?? point!.latitude,
-                      longitude: existingStation?.longitude ?? point!.longitude,
-                      totalSlots: totalSlots,
-                      availableCount: queue.length,
-                      freeSlotsCount: totalSlots - queue.length,
-                      queueOrder: queue,
-                      machineQrCode: qrController.text,
-                    );
+                          if (name.isEmpty || slotsText.isEmpty || qr.isEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text("Please fill all fields"),
+                              ),
+                            );
+                            return;
+                          }
 
-                    final navigator = Navigator.of(context);
-                    try {
-                      if (existingStation == null) {
-                        await _db.addStation(station);
-                      } else {
-                        await _db.updateStation(station);
-                      }
+                          final totalSlots = int.tryParse(slotsText) ?? 0;
+                          final queue = queueController.text
+                              .split(",")
+                              .map((e) => e.trim())
+                              .where((e) => e.isNotEmpty)
+                              .toList();
 
-                      // Update/Create Umbrella table entries
-                      for (var umbrellaId in queue) {
-                        await _db.saveUmbrella(
-                          Umbrella(
-                            umbrellaId: umbrellaId,
-                            stationId: station.stationId,
-                            status: 'available',
-                            createdAt: DateTime.now(),
-                          ),
-                        );
-                      }
+                          if (totalSlots < queue.length) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  "Slots ($totalSlots) cannot be less than umbrella count (${queue.length})",
+                                ),
+                              ),
+                            );
+                            return;
+                          }
 
-                      navigator.pop();
-                    } catch (e) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(
-                          context,
-                        ).showSnackBar(SnackBar(content: Text("Error: $e")));
-                      }
-                    }
-                  },
+                          setDialogState(() => isSaving = true);
+
+                          final navigator = Navigator.of(context);
+                          try {
+                            // Uniqueness check
+                            final isUnique = await _db.isQrCodeUnique(
+                              qr,
+                              excludeStationId: existingStation?.stationId,
+                            );
+                            if (!isUnique) {
+                              setDialogState(() => isSaving = false);
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      "Machine QR ID already exists",
+                                    ),
+                                  ),
+                                );
+                              }
+                              return;
+                            }
+
+                            final station = Station(
+                              stationId: existingStation?.stationId ?? '',
+                              name: name,
+                              description: desc,
+                              latitude:
+                                  existingStation?.latitude ?? point!.latitude,
+                              longitude:
+                                  existingStation?.longitude ??
+                                  point!.longitude,
+                              totalSlots: totalSlots,
+                              availableCount: queue.length,
+                              freeSlotsCount: totalSlots - queue.length,
+                              queueOrder: queue,
+                              machineQrCode: qr,
+                            );
+
+                            String finalStationId =
+                                existingStation?.stationId ?? '';
+                            if (existingStation == null) {
+                              final stationRef = await _db.addStation(station);
+                              finalStationId = stationRef.id;
+                            } else {
+                              await _db.updateStation(station);
+                            }
+
+                            // Update/Create Umbrella table entries
+                            for (var umbrellaId in queue) {
+                              await _db.saveUmbrella(
+                                Umbrella(
+                                  umbrellaId: umbrellaId,
+                                  resistance:
+                                      double.tryParse(umbrellaId) ?? 0.0,
+                                  stationId: finalStationId,
+                                  status: 'available',
+                                  createdAt: DateTime.now(),
+                                ),
+                              );
+                            }
+
+                            navigator.pop();
+                          } catch (e) {
+                            setDialogState(() => isSaving = false);
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text("Error: $e")),
+                              );
+                            }
+                          }
+                        },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF0066FF),
                     foregroundColor: Colors.white,
@@ -225,7 +315,16 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: Text(existingStation == null ? "Add" : "Save"),
+                  child: isSaving
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Text(existingStation == null ? "Add" : "Save"),
                 ),
               ],
             );
@@ -408,15 +507,15 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
 
     return Scaffold(
       backgroundColor: Colors.white,
-      body: Column(
-        children: [
-          // Premium Admin Header
-          _buildHeader(mapProvider),
+      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            // Premium Admin Header
+            _buildHeader(mapProvider),
 
-          // Map Section
-          Expanded(
-            flex: 5,
-            child: Container(
+            // Map Section
+            Container(
+              height: 400, // Fixed height for map to allow scrolling below
               margin: const EdgeInsets.all(24),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(35),
@@ -474,22 +573,310 @@ class _UmbrellaMapPageState extends State<UmbrellaMapPage> {
                 ),
               ),
             ),
-          ),
 
-          // Branding Footer
-          Padding(
-            padding: const EdgeInsets.only(bottom: 24),
-            child: Text(
-              "RainNest Infrastructure Management",
-              style: TextStyle(
-                color: Colors.grey[400],
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                letterSpacing: 1,
+            // Analytics Section
+            if (_isAdmin) _buildSalesAnalyticsSection(),
+
+            const SizedBox(height: 20),
+
+            // Branding Footer
+            Padding(
+              padding: const EdgeInsets.only(bottom: 24),
+              child: Text(
+                "RainNest Infrastructure Management",
+                style: TextStyle(
+                  color: Colors.grey[400],
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: 1,
+                ),
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSalesAnalyticsSection() {
+    final totalRevenue = _monthlyStats.values.fold(
+      0.0,
+      (sum, val) => sum + (val['revenue'] ?? 0.0),
+    );
+    final totalFines = _monthlyStats.values.fold(
+      0.0,
+      (sum, val) => sum + (val['fines'] ?? 0.0),
+    );
+    final totalSecurity = _monthlyStats.values.fold(
+      0.0,
+      (sum, val) => sum + (val['security'] ?? 0.0),
+    );
+    final monthName = DateFormat(
+      'MMMM',
+    ).format(DateTime(_selectedYear, _selectedMonth));
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 24),
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(30),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    "Monthly Analytics",
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    "$monthName $_selectedYear",
+                    style: TextStyle(color: Colors.grey[600], fontSize: 14),
+                  ),
+                ],
+              ),
+              _buildMonthDropdown(),
+            ],
+          ),
+          const SizedBox(height: 30),
+          Column(
+            children: [
+              _buildStatSummary(
+                "Revenue",
+                totalRevenue,
+                const Color(0xFF0066FF),
+                Icons.account_balance_wallet_rounded,
+              ),
+              const SizedBox(height: 12),
+              _buildStatSummary(
+                "Fines",
+                totalFines,
+                Colors.orange,
+                Icons.gavel_rounded,
+              ),
+              const SizedBox(height: 12),
+              _buildStatSummary(
+                "Security",
+                totalSecurity,
+                Colors.green,
+                Icons.security_rounded,
+              ),
+            ],
+          ),
+          const SizedBox(height: 30),
+          SizedBox(
+            height: 200,
+            child: _isLoadingStats
+                ? const Center(child: RainNestLoader())
+                : _monthlyStats.isEmpty
+                ? const Center(child: Text("No data for this month"))
+                : _buildBarChart(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatSummary(
+    String label,
+    double total,
+    Color color,
+    IconData icon,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "₹${total.toStringAsFixed(0)}",
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                  ),
+                ),
+                Text(
+                  label,
+                  style: TextStyle(color: Colors.grey[600], fontSize: 11),
+                ),
+              ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildMonthDropdown() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: Colors.grey[100],
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<int>(
+          value: _selectedMonth,
+          items: List.generate(12, (index) {
+            final date = DateTime(2024, index + 1);
+            return DropdownMenuItem(
+              value: index + 1,
+              child: Text(DateFormat('MMM').format(date)),
+            );
+          }),
+          onChanged: (val) {
+            if (val != null) {
+              setState(() => _selectedMonth = val);
+              _fetchStats();
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBarChart() {
+    return BarChart(
+      BarChartData(
+        alignment: BarChartAlignment.spaceAround,
+        maxY:
+            (_monthlyStats.values.isNotEmpty
+                    ? _monthlyStats.values
+                          .map(
+                            (v) =>
+                                (v['revenue'] ?? 0.0) +
+                                (v['fines'] ?? 0.0) +
+                                (v['security'] ?? 0.0),
+                          )
+                          .reduce((a, b) => a > b ? a : b)
+                    : 0.0) *
+                1.2 +
+            10,
+        barTouchData: BarTouchData(
+          enabled: true,
+          touchTooltipData: BarTouchTooltipData(
+            getTooltipColor: (_) => const Color(0xFF1A1A1A),
+            getTooltipItem: (group, groupIndex, rod, rodIndex) {
+              final stats = _monthlyStats[group.x];
+              final rev = stats?['revenue'] ?? 0.0;
+              final fine = stats?['fines'] ?? 0.0;
+              final security = stats?['security'] ?? 0.0;
+              return BarTooltipItem(
+                'Day ${group.x}\n',
+                const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+                children: [
+                  TextSpan(
+                    text: 'Rev: ₹${rev.toStringAsFixed(0)}\n',
+                    style: const TextStyle(
+                      color: Colors.blueAccent,
+                      fontSize: 12,
+                    ),
+                  ),
+                  TextSpan(
+                    text: 'Fine: ₹${fine.toStringAsFixed(0)}\n',
+                    style: const TextStyle(
+                      color: Colors.orangeAccent,
+                      fontSize: 12,
+                    ),
+                  ),
+                  TextSpan(
+                    text: 'Sec: ₹${security.toStringAsFixed(0)}',
+                    style: const TextStyle(
+                      color: Colors.greenAccent,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+        titlesData: FlTitlesData(
+          show: true,
+          bottomTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              getTitlesWidget: (value, meta) {
+                if (value % 5 != 0 &&
+                    value != 1 &&
+                    value != _monthlyStats.length) {
+                  return const SizedBox.shrink();
+                }
+                return Text(
+                  value.toInt().toString(),
+                  style: TextStyle(color: Colors.grey[400], fontSize: 10),
+                );
+              },
+            ),
+          ),
+          leftTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          topTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          rightTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+        ),
+        gridData: const FlGridData(show: false),
+        borderData: FlBorderData(show: false),
+        barGroups: _monthlyStats.entries.map((entry) {
+          final rev = entry.value['revenue'] ?? 0.0;
+          final fine = entry.value['fines'] ?? 0.0;
+          final security = entry.value['security'] ?? 0.0;
+
+          return BarChartGroupData(
+            x: entry.key,
+            barsSpace: 2, // Close together as requested
+            barRods: [
+              BarChartRodData(
+                toY: rev,
+                color: const Color(0xFF0066FF),
+                width: 4,
+                borderRadius: BorderRadius.circular(2),
+              ),
+              BarChartRodData(
+                toY: fine,
+                color: Colors.orange,
+                width: 4,
+                borderRadius: BorderRadius.circular(2),
+              ),
+              BarChartRodData(
+                toY: security,
+                color: Colors.green,
+                width: 4,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ],
+          );
+        }).toList(),
       ),
     );
   }

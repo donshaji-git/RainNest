@@ -67,21 +67,63 @@ class _RentalCompletedPageState extends State<RentalCompletedPage>
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              ScaleTransition(
-                scale: _scaleAnimation,
-                child: Container(
-                  width: 100,
-                  height: 100,
-                  decoration: BoxDecoration(
-                    color: widget.isDamaged ? Colors.orange : Colors.green,
-                    shape: BoxShape.circle,
+              Stack(
+                alignment: Alignment.center,
+                children: [
+                  ScaleTransition(
+                    scale: _scaleAnimation,
+                    child: Container(
+                      width: 100,
+                      height: 100,
+                      decoration: BoxDecoration(
+                        color: widget.isDamaged ? Colors.orange : Colors.green,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        widget.isDamaged ? Icons.report_problem : Icons.check,
+                        color: Colors.white,
+                        size: 60,
+                      ),
+                    ),
                   ),
-                  child: Icon(
-                    widget.isDamaged ? Icons.report_problem : Icons.check,
-                    color: Colors.white,
-                    size: 60,
-                  ),
-                ),
+                  if (widget.penalty == 0 && !widget.isDamaged)
+                    Positioned(
+                      top: 0,
+                      right: 0,
+                      child: TweenAnimationBuilder<double>(
+                        tween: Tween(begin: 0.0, end: 1.0),
+                        duration: const Duration(milliseconds: 1200),
+                        curve: Curves.elasticOut,
+                        builder: (context, value, child) {
+                          return Transform.translate(
+                            offset: Offset(0, -20 * value),
+                            child: Transform.scale(
+                              scale: value,
+                              child: Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFFFFB800),
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black12,
+                                      blurRadius: 10,
+                                      offset: Offset(0, 5),
+                                    ),
+                                  ],
+                                ),
+                                child: const Icon(
+                                  Icons.toll_rounded,
+                                  color: Colors.white,
+                                  size: 24,
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                ],
               ),
               const SizedBox(height: 32),
               Text(
@@ -133,6 +175,14 @@ class _RentalCompletedPageState extends State<RentalCompletedPage>
             "₹${widget.penalty.toStringAsFixed(2)}",
             valueColor: widget.penalty > 0 ? Colors.red : Colors.green,
           ),
+          if (widget.penalty == 0 && !widget.isDamaged) ...[
+            const Divider(height: 24),
+            _buildSummaryRow(
+              "COINS EARNED",
+              "+10 Coins",
+              valueColor: const Color(0xFFFFB800),
+            ),
+          ],
           if (widget.isDamaged) ...[
             const Divider(height: 24),
             _buildSummaryRow(

@@ -117,8 +117,8 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
 
       if (matchedStation.stationId.isNotEmpty) {
         final userProvider = context.read<UserProvider>();
-        if (userProvider.hasActiveRentals) {
-          // Pause scanner and ask user
+        if (widget.returnRental == null && userProvider.hasActiveRentals) {
+          // General scan with active rentals: Ask user what they want to do
           _controller.stop();
           _showActionSelectionDialog(matchedStation);
           return;
@@ -260,15 +260,123 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
     }
   }
 
+  Future<bool?> _showPaymentWarning() {
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Row(
+          children: [
+            const Icon(Icons.info_outline_rounded, color: Color(0xFF0066FF)),
+            const SizedBox(width: 12),
+            Text(
+              "Notice Before Payment",
+              style: GoogleFonts.outfit(
+                fontWeight: FontWeight.bold,
+                fontSize: 20,
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "By proceeding with the payment, please note:",
+              style: GoogleFonts.outfit(fontSize: 16, color: Colors.grey[800]),
+            ),
+            const SizedBox(height: 16),
+            _buildWarningItem(
+              Icons.timer_outlined,
+              "Withdrawal takes 2 days of verification.",
+            ),
+            const SizedBox(height: 12),
+            _buildWarningItem(
+              Icons.account_balance_wallet_outlined,
+              "Deposit is held for security purposes.",
+            ),
+            const SizedBox(height: 16),
+            Text(
+              "Do you wish to proceed to payment?",
+              style: GoogleFonts.outfit(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[600],
+              ),
+            ),
+          ],
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(
+              "Cancel",
+              style: GoogleFonts.outfit(
+                color: Colors.grey[600],
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF0066FF),
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            child: Text(
+              "Proceed to Payment",
+              style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWarningItem(IconData icon, String text) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 20, color: const Color(0xFF0066FF)),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            text,
+            style: GoogleFonts.outfit(fontSize: 14, color: Colors.grey[700]),
+          ),
+        ),
+      ],
+    );
+  }
+
   void _proceedToPayment(Station targetStation) async {
-    final userProvider = context.read<UserProvider>();
-    final user = userProvider.user;
+    final user = Provider.of<UserProvider>(context, listen: false).user;
     if (user == null) return;
 
+    // Check for pending redemption
+    final userData = await DatabaseService().getUser(user.uid);
+    if (userData != null && userData.redemptionStatus == 'pending') {
+      setState(() => _statusMessage = "Processing refund cancellation...");
+      await DatabaseService().cancelRedemption(user.uid);
+    }
+
     if (targetStation.queueOrder.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("No umbrellas available at this station")),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("No umbrellas available at this station"),
+          ),
+        );
+      }
       return;
     }
 
@@ -288,6 +396,15 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
           _statusMessage = "Sorry, no umbrellas left at this station.";
         });
         return;
+      }
+
+      // 2. Show withdrawal warning before calculating payment
+      if (mounted) {
+        final confirmed = await _showPaymentWarning();
+        if (confirmed != true) {
+          setState(() => _isProcessing = false);
+          return;
+        }
       }
 
       final requiredPayment = await DatabaseService().getRequiredPayment(
@@ -692,9 +809,6 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
                       Navigator.pop(context);
                       context.read<RentalProvider>().setTargetStation(station);
                       _controller.start();
-                      setState(() {
-                        _statusMessage = "Verify Machine QR again to Rent";
-                      });
                     },
                   ),
                 ),
@@ -735,7 +849,6 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
     final user = context.read<UserProvider>().user;
     if (user == null) return;
 
-    // Show loading while fetching rentals
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
