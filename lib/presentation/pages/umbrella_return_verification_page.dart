@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter/services.dart';
 import 'dart:async';
+import 'coin_reward_animation_page.dart';
 import 'rental_completed_page.dart';
 import '../../services/database_service.dart';
 import '../../data/models/transaction.dart';
@@ -93,7 +94,7 @@ class _UmbrellaReturnVerificationPageState
   }
 
   void _autoReturn() {
-    if (!_isProcessing) {
+    if (!_isProcessing && mounted) {
       // Set all checks to true for auto-return
       setState(() {
         _checkedHandle = true;
@@ -145,16 +146,33 @@ class _UmbrellaReturnVerificationPageState
 
       if (mounted) {
         context.read<RentalProvider>().clearVerification();
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (context) => RentalCompletedPage(
-              penalty: result['penalty'] ?? 0.0,
-              duration: result['duration'] ?? 0,
-              timestamp: result['timestamp'] ?? DateTime.now(),
-              umbrellaId: widget.rental.umbrellaId ?? '',
+        final int coinsAwarded = (result['coinsAwarded'] as int?) ?? 0;
+
+        if (coinsAwarded > 0) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (context) => CoinRewardAnimationPage(
+                coinsAwarded: coinsAwarded,
+                previousCoinBalance: 0, // will show live from Firestore
+                penalty: result['penalty'] ?? 0.0,
+                duration: result['duration'] ?? 0,
+                timestamp: result['timestamp'] ?? DateTime.now(),
+                umbrellaId: widget.rental.umbrellaId ?? '',
+              ),
             ),
-          ),
-        );
+          );
+        } else {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (context) => RentalCompletedPage(
+                penalty: result['penalty'] ?? 0.0,
+                duration: result['duration'] ?? 0,
+                timestamp: result['timestamp'] ?? DateTime.now(),
+                umbrellaId: widget.rental.umbrellaId ?? '',
+              ),
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -163,6 +181,8 @@ class _UmbrellaReturnVerificationPageState
           SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
         );
       }
+    } finally {
+      DatabaseService().sendGreenBlinkToStation(widget.stationId);
     }
   }
 
@@ -178,8 +198,10 @@ class _UmbrellaReturnVerificationPageState
   }
 
   Future<void> _handleDamagedReturn(String damageType) async {
-    setState(() => _isProcessing = true);
-    Navigator.pop(context); // Close sheet
+    if (mounted) {
+      setState(() => _isProcessing = true);
+      Navigator.pop(context); // Close sheet
+    }
 
     try {
       final result = await DatabaseService().processFullReturn(
@@ -193,6 +215,7 @@ class _UmbrellaReturnVerificationPageState
 
       if (mounted) {
         context.read<RentalProvider>().clearVerification();
+        // Damaged returns get a penalty, so coinsAwarded will be 0
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (context) => RentalCompletedPage(
@@ -213,6 +236,8 @@ class _UmbrellaReturnVerificationPageState
           SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
         );
       }
+    } finally {
+      DatabaseService().sendGreenBlinkToStation(widget.stationId);
     }
   }
 

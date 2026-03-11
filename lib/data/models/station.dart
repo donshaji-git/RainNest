@@ -9,6 +9,8 @@ class Station {
   final String machineQrCode;
   final double latitude;
   final double longitude;
+  final double
+  totalResistance; // Current measured resistance of all umbrellas in series
 
   Station({
     required this.stationId,
@@ -21,6 +23,7 @@ class Station {
     required this.machineQrCode,
     required this.latitude,
     required this.longitude,
+    this.totalResistance = 0.0,
   });
 
   Map<String, dynamic> toMap() {
@@ -35,6 +38,7 @@ class Station {
       'machineQrCode': machineQrCode,
       'latitude': latitude,
       'longitude': longitude,
+      'totalResistance': totalResistance,
     };
   }
 
@@ -50,6 +54,7 @@ class Station {
       machineQrCode: data['machineQrCode'] ?? '',
       latitude: (data['latitude'] as num?)?.toDouble() ?? 0.0,
       longitude: (data['longitude'] as num?)?.toDouble() ?? 0.0,
+      totalResistance: (data['totalResistance'] as num?)?.toDouble() ?? 0.0,
     );
   }
 }

@@ -5,6 +5,7 @@ class Umbrella {
   final double resistance; // Resistance value in Ohms
   final String? stationId;
   final String status; // 'available', 'rented', 'maintenance'
+  final String? lastUserId;
   final DateTime createdAt;
 
   Umbrella({
@@ -12,6 +13,7 @@ class Umbrella {
     required this.resistance,
     this.stationId,
     required this.status,
+    this.lastUserId,
     required this.createdAt,
   });
 
@@ -21,6 +23,7 @@ class Umbrella {
       'resistance': resistance,
       'stationId': stationId,
       'status': status,
+      'lastUserId': lastUserId,
       'createdAt': Timestamp.fromDate(createdAt),
     };
   }
@@ -31,6 +34,7 @@ class Umbrella {
       resistance: (data['resistance'] as num?)?.toDouble() ?? 0.0,
       stationId: data['stationId'],
       status: data['status'] ?? 'available',
+      lastUserId: data['lastUserId'],
       createdAt: (data['createdAt'] is Timestamp)
           ? (data['createdAt'] as Timestamp).toDate()
           : DateTime.now(),

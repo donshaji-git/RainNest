@@ -51,5 +51,7 @@
 	<string>RainNest needs your location to alert you about rain and show nearby umbrella machines even when the app is in the background.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>RainNest needs your location to find the nearest umbrella machines and provide weather alerts.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>RainNest needs camera access to scan QR codes on umbrella machines for rentals and returns.</string>
 </dict>
 </plist>

@@ -221,7 +221,7 @@ class _HomePageState extends State<HomePage> {
         children: [
           _buildHomeBody(),
           const UmbrellaPage(),
-          const ScannerPage(),
+          ScannerPage(isActive: _currentIndex == 2),
           const WalletPage(),
           const ProfilePage(),
         ],

@@ -16,7 +16,8 @@ import '../../services/database_service.dart';
 
 class ScannerPage extends StatefulWidget {
   final TransactionModel? returnRental;
-  const ScannerPage({super.key, this.returnRental});
+  final bool isActive;
+  const ScannerPage({super.key, this.returnRental, this.isActive = true});
 
   @override
   State<ScannerPage> createState() => _ScannerPageState();
@@ -29,23 +30,38 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
   );
   bool _isProcessing = false;
   String? _statusMessage;
-  bool _isSuccess = false;
+  final bool _isSuccess = false;
+  bool _hasScanned = false; // Prevents any second scan from being processed
   PaymentService? _paymentService;
-
-  // Anti-double-scan logic
-  String? _lastScannedCode;
-  DateTime? _lastScanTime;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     // Give the UI a bit of time to settle before starting the camera
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (mounted) {
-        _controller.start();
+    if (widget.isActive) {
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted && widget.isActive) {
+          _controller.start();
+        }
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(ScannerPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isActive != widget.isActive) {
+      if (widget.isActive) {
+        Future.delayed(const Duration(milliseconds: 200), () {
+          if (mounted && widget.isActive) {
+            _controller.start();
+          }
+        });
+      } else {
+        _controller.stop();
       }
-    });
+    }
   }
 
   @override
@@ -62,7 +78,7 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
 
     switch (state) {
       case AppLifecycleState.resumed:
-        _controller.start();
+        if (widget.isActive) _controller.start();
         break;
       case AppLifecycleState.inactive:
       case AppLifecycleState.paused:
@@ -75,19 +91,13 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
   }
 
   void _onCodeScanned(String code) async {
-    if (_isProcessing) return;
-
-    // Haptic feedback
+    // ----- ONE-SHOT GUARD -----
+    // Stop the scanner and block immediately on first valid trigger.
+    if (_hasScanned || _isProcessing) return;
+    _hasScanned = true;
+    _controller.stop(); // camera off — no more frames
     Vibration.vibrate(duration: 100);
-
-    // Global cooldown to prevent rapid fire
-    final now = DateTime.now();
-    if (_lastScanTime != null &&
-        now.difference(_lastScanTime!).inMilliseconds < 1500) {
-      if (code == _lastScannedCode) return;
-    }
-    _lastScanTime = now;
-    _lastScannedCode = code;
+    // --------------------------
 
     final rentalProvider = context.read<RentalProvider>();
 
@@ -116,58 +126,35 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
       );
 
       if (matchedStation.stationId.isNotEmpty) {
-        final userProvider = context.read<UserProvider>();
-        if (widget.returnRental == null && userProvider.hasActiveRentals) {
-          // General scan with active rentals: Ask user what they want to do
-          _controller.stop();
-          _showActionSelectionDialog(matchedStation);
-          return;
-        }
-
-        rentalProvider.setTargetStation(matchedStation);
         setState(() {
+          _isProcessing = true;
           _statusMessage = "Machine Found: ${matchedStation.name}";
         });
+
+        // Short delay for visual feedback
+        await Future.delayed(const Duration(milliseconds: 500));
+
+        // Tell NodeMCU to blink orange (waiting for payment / selection)
+        // We use a short timeout so the UI proceeds even if RTDB is slow
+        try {
+          await DatabaseService()
+              .sendWaitingCommandToStation(matchedStation.stationId)
+              .timeout(const Duration(seconds: 2));
+        } catch (e) {
+          debugPrint("Station sync timeout/error: $e");
+        }
+
+        if (mounted) {
+          _proceedToPayment(matchedStation);
+        }
         return;
       }
 
-      setState(() {
-        _statusMessage = "Scanned: $code\n(No matching machine found)";
-      });
-
-      // Auto-clear message after 3 seconds
-      Future.delayed(const Duration(seconds: 3), () {
-        if (mounted && _statusMessage != null && !_isProcessing) {
-          setState(() => _statusMessage = null);
-        }
-      });
-      return;
-    }
-
-    setState(() {
-      _isProcessing = true;
-      _statusMessage = "Verifying machine...";
-    });
-
-    final target = rentalProvider.targetStation!;
-    if (code == target.machineQrCode) {
-      setState(() {
-        _isSuccess = true;
-        _statusMessage = "Verified! Initiating payment...";
-      });
-
-      // Wait a moment for UX
-      await Future.delayed(const Duration(seconds: 1));
-
+      // No match — show error popup
       if (mounted) {
-        _proceedToPayment(target);
+        _showInvalidCodeDialog(code);
       }
-    } else {
-      setState(() {
-        _isProcessing = false;
-        _isSuccess = false;
-        _statusMessage = "Invalid Machine QR. Please scan the correct one.";
-      });
+      return;
     }
   }
 
@@ -191,16 +178,22 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
 
     if (matchedStation.stationId.isEmpty) {
       setState(() {
+        _isProcessing = false;
         _statusMessage = "Invalid Machine QR code";
       });
+      _hasScanned = false;
+      _controller.start();
       return;
     }
 
     final user = Provider.of<UserProvider>(context, listen: false).user;
     if (user == null) {
       setState(() {
+        _isProcessing = false;
         _statusMessage = "User not logged in.";
       });
+      _hasScanned = false;
+      _controller.start();
       return;
     }
 
@@ -239,6 +232,15 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
         );
       }
 
+      // Tell NodeMCU to blink orange (waiting for return confirmation)
+      try {
+        await DatabaseService()
+            .sendWaitingCommandToStation(matchedStation.stationId)
+            .timeout(const Duration(seconds: 2));
+      } catch (e) {
+        debugPrint("Station return sync timeout/error: $e");
+      }
+
       if (mounted) {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
@@ -256,6 +258,8 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
           _isProcessing = false;
           _statusMessage = "Error: $e";
         });
+        _hasScanned = false;
+        _controller.start();
       }
     }
   }
@@ -264,81 +268,134 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
     return showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: Row(
-          children: [
-            const Icon(Icons.info_outline_rounded, color: Color(0xFF0066FF)),
-            const SizedBox(width: 12),
-            Text(
-              "Notice Before Payment",
-              style: GoogleFonts.outfit(
-                fontWeight: FontWeight.bold,
-                fontSize: 20,
-              ),
-            ),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              "By proceeding with the payment, please note:",
-              style: GoogleFonts.outfit(fontSize: 16, color: Colors.grey[800]),
-            ),
-            const SizedBox(height: 16),
-            _buildWarningItem(
-              Icons.timer_outlined,
-              "Withdrawal takes 2 days of verification.",
-            ),
-            const SizedBox(height: 12),
-            _buildWarningItem(
-              Icons.account_balance_wallet_outlined,
-              "Deposit is held for security purposes.",
-            ),
-            const SizedBox(height: 16),
-            Text(
-              "Do you wish to proceed to payment?",
-              style: GoogleFonts.outfit(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[600],
-              ),
-            ),
-          ],
-        ),
-        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(
-              "Cancel",
-              style: GoogleFonts.outfit(
-                color: Colors.grey[600],
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF0066FF),
-              foregroundColor: Colors.white,
-              elevation: 0,
+      builder: (context) {
+        bool agreedToTerms = false;
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              backgroundColor: Colors.white,
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(24),
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            ),
-            child: Text(
-              "Proceed to Payment",
-              style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
-            ),
-          ),
-        ],
-      ),
+              title: Row(
+                children: [
+                  const Icon(
+                    Icons.info_outline_rounded,
+                    color: Color(0xFF0066FF),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    "Notice Before Payment",
+                    style: GoogleFonts.outfit(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 20,
+                    ),
+                  ),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "By proceeding, you agree to the following:",
+                      style: GoogleFonts.outfit(
+                        fontSize: 16,
+                        color: Colors.grey[800],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    _buildWarningItem(
+                      Icons.account_balance_wallet_outlined,
+                      "A ₹100 deposit is held for security purposes.",
+                    ),
+                    const SizedBox(height: 12),
+                    _buildWarningItem(
+                      Icons.money_off_csred_outlined,
+                      "Late return fines will be deducted from your wallet balance.",
+                    ),
+                    const SizedBox(height: 12),
+                    _buildWarningItem(
+                      Icons.umbrella_outlined,
+                      "You are responsible for returning the umbrella in good condition.",
+                    ),
+                    const SizedBox(height: 12),
+                    _buildWarningItem(
+                      Icons.timer_outlined,
+                      "Withdrawal takes 2 days of verification.",
+                    ),
+                    const SizedBox(height: 20),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade200),
+                      ),
+                      child: CheckboxListTile(
+                        value: agreedToTerms,
+                        onChanged: (val) {
+                          setState(() {
+                            agreedToTerms = val ?? false;
+                          });
+                        },
+                        title: Text(
+                          "I agree to the terms and conditions",
+                          style: GoogleFonts.outfit(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        controlAffinity: ListTileControlAffinity.leading,
+                        activeColor: const Color(0xFF0066FF),
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: Text(
+                    "Cancel",
+                    style: GoogleFonts.outfit(
+                      color: Colors.grey[600],
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                ElevatedButton(
+                  onPressed: agreedToTerms
+                      ? () => Navigator.pop(context, true)
+                      : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF0066FF),
+                    disabledBackgroundColor: Colors.grey[300],
+                    foregroundColor: Colors.white,
+                    disabledForegroundColor: Colors.grey[500],
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
+                  ),
+                  child: Text(
+                    "Proceed",
+                    style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -365,7 +422,9 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
     // Check for pending redemption
     final userData = await DatabaseService().getUser(user.uid);
     if (userData != null && userData.redemptionStatus == 'pending') {
-      setState(() => _statusMessage = "Processing refund cancellation...");
+      if (mounted) {
+        setState(() => _statusMessage = "Processing refund cancellation...");
+      }
       await DatabaseService().cancelRedemption(user.uid);
     }
 
@@ -376,14 +435,18 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
             content: Text("No umbrellas available at this station"),
           ),
         );
+        _hasScanned = false;
+        _controller.start();
       }
       return;
     }
 
-    setState(() {
-      _isProcessing = true;
-      _statusMessage = "Calculating amount...";
-    });
+    if (mounted) {
+      setState(() {
+        _isProcessing = true;
+        _statusMessage = "Calculating amount...";
+      });
+    }
 
     try {
       // 1. Re-verify station availability from DB
@@ -391,10 +454,14 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
         targetStation.stationId,
       );
       if (latestStation == null || latestStation.queueOrder.isEmpty) {
-        setState(() {
-          _isProcessing = false;
-          _statusMessage = "Sorry, no umbrellas left at this station.";
-        });
+        if (mounted) {
+          setState(() {
+            _isProcessing = false;
+            _statusMessage = "Sorry, no umbrellas left at this station.";
+          });
+          _hasScanned = false;
+          _controller.start();
+        }
         return;
       }
 
@@ -402,7 +469,14 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
       if (mounted) {
         final confirmed = await _showPaymentWarning();
         if (confirmed != true) {
-          setState(() => _isProcessing = false);
+          if (mounted) {
+            setState(() {
+              _isProcessing = false;
+              _statusMessage = null;
+            });
+            _hasScanned = false;
+            _controller.start();
+          }
           return;
         }
       }
@@ -439,6 +513,8 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
           _isProcessing = false;
           _statusMessage = "Error: $e";
         });
+        _hasScanned = false;
+        _controller.start();
       }
     }
   }
@@ -525,6 +601,112 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
       email: email,
       description: description,
     );
+  }
+
+  void _showInvalidCodeDialog(String code) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        // Auto-close after 3 seconds
+        final navigator = Navigator.of(context);
+        Future.delayed(const Duration(seconds: 3), () {
+          if (navigator.canPop()) {
+            navigator.pop();
+          }
+        });
+
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(28),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.1),
+                  blurRadius: 20,
+                  spreadRadius: 5,
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.qr_code_scanner_rounded,
+                    color: Colors.red,
+                    size: 40,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  "Invalid QR Code",
+                  style: GoogleFonts.outfit(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: const Color(0xFF1A1A1A),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  "Scanned: \"$code\"",
+                  style: GoogleFonts.outfit(
+                    fontSize: 14,
+                    color: Colors.grey[600],
+                    fontStyle: FontStyle.italic,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  "The scanned code is not a valid RainNest machine. Please make sure you are scanning the QR code on the station.",
+                  style: GoogleFonts.outfit(
+                    fontSize: 15,
+                    color: Colors.grey[800],
+                    height: 1.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1A1A1A),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 32,
+                      vertical: 12,
+                    ),
+                  ),
+                  child: Text(
+                    "Try Again",
+                    style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    ).then((_) {
+      if (mounted) {
+        _hasScanned = false;
+        _controller.start();
+        setState(() => _statusMessage = null);
+      }
+    });
   }
 
   void _showManualEntryDialog() {
@@ -758,215 +940,5 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
     );
   }
 
-  void _showActionSelectionDialog(Station station) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isDismissible: false,
-      enableDrag: false,
-      builder: (context) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-        ),
-        padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 24),
-            Text(
-              "Station Found: ${station.name}",
-              style: GoogleFonts.outfit(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              "What would you like to do?",
-              style: GoogleFonts.outfit(color: Colors.grey[600]),
-            ),
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildActionButton(
-                    icon: Icons.umbrella_rounded,
-                    label: "Rent",
-                    color: const Color(0xFF0066FF),
-                    onTap: () {
-                      Navigator.pop(context);
-                      context.read<RentalProvider>().setTargetStation(station);
-                      _controller.start();
-                    },
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: _buildActionButton(
-                    icon: Icons.keyboard_return_rounded,
-                    label: "Return",
-                    color: Colors.orange,
-                    onTap: () {
-                      Navigator.pop(context);
-                      _showRentalSelectionBottomSheet(station);
-                    },
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            Center(
-              child: TextButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  _controller.start();
-                },
-                child: Text(
-                  "Cancel",
-                  style: GoogleFonts.outfit(color: Colors.grey),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
-  void _showRentalSelectionBottomSheet(Station station) async {
-    final user = context.read<UserProvider>().user;
-    if (user == null) return;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.6,
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-        ),
-        child: Column(
-          children: [
-            const SizedBox(height: 20),
-            Text(
-              "Select Umbrella to Return",
-              style: GoogleFonts.outfit(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Expanded(
-              child: StreamBuilder<List<TransactionModel>>(
-                stream: DatabaseService().getActiveRentalsStream(user.uid),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  final rentals = snapshot.data ?? [];
-                  if (rentals.isEmpty) {
-                    return const Center(child: Text("No active rentals found"));
-                  }
-
-                  return ListView.builder(
-                    padding: const EdgeInsets.all(20),
-                    itemCount: rentals.length,
-                    itemBuilder: (context, index) {
-                      final rental = rentals[index];
-                      return Card(
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        margin: const EdgeInsets.only(bottom: 12),
-                        child: ListTile(
-                          leading: const Icon(
-                            Icons.umbrella_rounded,
-                            color: Color(0xFF0066FF),
-                          ),
-                          title: Text("Umbrella #${rental.umbrellaId}"),
-                          subtitle: Text(
-                            "Rented on ${rental.timestamp.day}/${rental.timestamp.month}",
-                          ),
-                          trailing: const Icon(Icons.chevron_right_rounded),
-                          onTap: () {
-                            Navigator.pop(context);
-                            Navigator.of(context).pushReplacement(
-                              MaterialPageRoute(
-                                builder: (context) =>
-                                    UmbrellaReturnVerificationPage(
-                                      userId: user.uid,
-                                      stationId: station.stationId,
-                                      rental: rental,
-                                    ),
-                              ),
-                            );
-                          },
-                        ),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                _controller.start();
-              },
-              child: const Text("Cancel"),
-            ),
-            const SizedBox(height: 20),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildActionButton({
-    required IconData icon,
-    required String label,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 24),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: color.withValues(alpha: 0.3)),
-        ),
-        child: Column(
-          children: [
-            Icon(icon, color: color, size: 32),
-            const SizedBox(height: 8),
-            Text(
-              label,
-              style: GoogleFonts.outfit(
-                color: color,
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }

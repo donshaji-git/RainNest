@@ -146,10 +146,14 @@ class _LoginPageState extends State<LoginPage> {
     setState(() => _isLoading = true);
     try {
       await GoogleAuthService.signInWithGoogle();
-      // SUCCESS: AuthWrapper in main.dart will catch the state change and navigate
+      // On success, AuthWrapper will eventually switch the screen.
+      // We purposefully DO NOT set _isLoading to false here.
+      // Doing so causes a brief flash of the login page UI before the Auth stream
+      // triggers the navigation to the home page, which looks like a bug.
     } catch (e) {
-      if (!mounted) return;
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
 
       String errorMessage = "Google Sign-In failed: ${e.toString()}";
 

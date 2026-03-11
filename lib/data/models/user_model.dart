@@ -16,6 +16,7 @@ class UserModel {
   final int coins;
   final DateTime? redemptionRequestedAt;
   final String redemptionStatus;
+  final bool redemptionBlocked;
   final DateTime createdAt;
 
   UserModel({
@@ -34,6 +35,7 @@ class UserModel {
     this.coins = 0,
     this.redemptionRequestedAt,
     this.redemptionStatus = 'none',
+    this.redemptionBlocked = false,
     required this.createdAt,
   });
 
@@ -58,6 +60,7 @@ class UserModel {
           ? (data['redemptionRequestedAt'] as Timestamp).toDate()
           : null,
       redemptionStatus: data['redemptionStatus'] ?? 'none',
+      redemptionBlocked: data['redemptionBlocked'] ?? false,
       createdAt: (data['createdAt'] is Timestamp)
           ? (data['createdAt'] as Timestamp).toDate()
           : DateTime.now(),
@@ -85,7 +88,12 @@ class UserModel {
           ? Timestamp.fromDate(redemptionRequestedAt!)
           : null,
       'redemptionStatus': redemptionStatus,
+      'redemptionBlocked': redemptionBlocked,
       'createdAt': Timestamp.fromDate(createdAt),
     };
   }
+
+  /// Returns the actual refundable balance, clamped between 0 and 100 as per business rules.
+  double get totalBalance =>
+      (walletBalance - fineAccumulated).clamp(0.0, 100.0);
 }

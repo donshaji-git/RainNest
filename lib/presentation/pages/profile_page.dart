@@ -5,10 +5,45 @@ import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
 import '../../data/models/user_model.dart';
 import '../../providers/user_provider.dart';
-import 'login_page.dart';
+import '../../main.dart';
+import '../../services/database_service.dart';
+import 'rental_history_page.dart';
+import 'wallet_page.dart';
 
-class ProfilePage extends StatelessWidget {
+class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
+
+  @override
+  State<ProfilePage> createState() => _ProfilePageState();
+}
+
+class _ProfilePageState extends State<ProfilePage> {
+  int _monthlyRentals = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMonthlyRentals();
+  }
+
+  Future<void> _loadMonthlyRentals() async {
+    final user = context.read<UserProvider>().user;
+    if (user == null) return;
+
+    final now = DateTime.now();
+    final startOfMonth = DateTime(now.year, now.month, 1);
+
+    final transactions = await DatabaseService().getUserTransactions(user.uid);
+    final count = transactions.where((tx) {
+      return tx.type == 'rental_fee' && tx.timestamp.isAfter(startOfMonth);
+    }).length;
+
+    if (mounted) {
+      setState(() {
+        _monthlyRentals = count;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -112,8 +147,14 @@ class ProfilePage extends StatelessWidget {
           children: [
             _buildStatItem(
               userData?.activeRentalIds.length.toString() ?? "0",
-              "RENTALS",
+              "ACTIVE",
               Icons.umbrella_rounded,
+            ),
+            Container(height: 40, width: 1, color: Colors.grey[100]),
+            _buildStatItem(
+              "$_monthlyRentals",
+              "THIS MONTH",
+              Icons.calendar_month_rounded,
             ),
             Container(height: 40, width: 1, color: Colors.grey[100]),
             _buildStatItem(
@@ -190,7 +231,17 @@ class ProfilePage extends StatelessWidget {
                 _buildMenuTile(
                   icon: Icons.history_rounded,
                   title: "Rental History",
-                  onTap: () {},
+                  onTap: () {
+                    if (userData != null) {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) =>
+                              RentalHistoryPage(userId: userData.uid),
+                        ),
+                      );
+                    }
+                  },
                 ),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -200,9 +251,16 @@ class ProfilePage extends StatelessWidget {
                   icon: Icons.account_balance_wallet_rounded,
                   title: "Wallet & Deposit",
                   subtitle:
-                      "Refundable: ₹${userData?.walletBalance.toStringAsFixed(2) ?? "0.00"}",
+                      "Refundable: ₹${userData?.totalBalance.toStringAsFixed(2) ?? "0.00"}",
                   subtitleColor: Colors.green,
-                  onTap: () {},
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const WalletPage(),
+                      ),
+                    );
+                  },
                 ),
               ],
             ),
@@ -348,15 +406,6 @@ class ProfilePage extends StatelessWidget {
             child: Column(
               children: [
                 _buildMenuTile(
-                  icon: Icons.payment_rounded,
-                  title: "Payment Methods",
-                  onTap: () {},
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Divider(height: 1, color: Colors.grey[50]),
-                ),
-                _buildMenuTile(
                   icon: Icons.help_outline_rounded,
                   title: "Help & Support",
                   onTap: () => _showHelpModal(context),
@@ -391,9 +440,10 @@ class ProfilePage extends StatelessWidget {
             onTap: () {
               // Trigger sign-out in background
               AuthService().signOut();
-              // Navigate immediately for instantaneous feel
+              // Navigate back to the AuthWrapper, which serves as our app's root router.
+              // We must NEVER navigate directly to LoginPage because it drops the router tree.
               Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (context) => const LoginPage()),
+                MaterialPageRoute(builder: (context) => const AuthWrapper()),
                 (route) => false,
               );
             },

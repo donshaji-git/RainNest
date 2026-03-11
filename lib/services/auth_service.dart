@@ -8,17 +8,27 @@ class AuthService {
   Stream<User?> get user => _auth.authStateChanges();
 
   Future<UserCredential> signUpWithEmail(String email, String password) async {
-    return await _auth.createUserWithEmailAndPassword(
-      email: email,
-      password: password,
-    );
+    try {
+      return await _auth.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+    } catch (e) {
+      debugPrint("SignUp Error: $e");
+      rethrow;
+    }
   }
 
   Future<UserCredential> signInWithEmail(String email, String password) async {
-    return await _auth.signInWithEmailAndPassword(
-      email: email,
-      password: password,
-    );
+    try {
+      return await _auth.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+    } catch (e) {
+      debugPrint("SignIn Error: $e");
+      rethrow;
+    }
   }
 
   Future<void> verifyPhone({
@@ -26,35 +36,54 @@ class AuthService {
     required Function(String, int?) codeSent,
     required Function(FirebaseAuthException) verificationFailed,
   }) async {
-    await _auth.verifyPhoneNumber(
-      phoneNumber: phoneNumber,
-      verificationCompleted: (PhoneAuthCredential credential) async {
-        await _auth.signInWithCredential(credential);
-      },
-      verificationFailed: verificationFailed,
-      codeSent: codeSent,
-      codeAutoRetrievalTimeout: (String verificationId) {},
-    );
+    try {
+      await _auth.verifyPhoneNumber(
+        phoneNumber: phoneNumber,
+        verificationCompleted: (PhoneAuthCredential credential) async {
+          await _auth.signInWithCredential(credential);
+        },
+        verificationFailed: verificationFailed,
+        codeSent: codeSent,
+        codeAutoRetrievalTimeout: (String verificationId) {},
+      );
+    } catch (e) {
+      debugPrint("Phone Verification error: $e");
+      rethrow;
+    }
   }
 
   Future<UserCredential> signInWithOtp(
     String verificationId,
     String smsCode,
   ) async {
-    PhoneAuthCredential credential = PhoneAuthProvider.credential(
-      verificationId: verificationId,
-      smsCode: smsCode,
-    );
-    return await _auth.signInWithCredential(credential);
+    try {
+      PhoneAuthCredential credential = PhoneAuthProvider.credential(
+        verificationId: verificationId,
+        smsCode: smsCode,
+      );
+      return await _auth.signInWithCredential(credential);
+    } catch (e) {
+      debugPrint("OTP Signin Error: $e");
+      rethrow;
+    }
   }
 
   Future<void> sendEmailVerification() async {
-    await _auth.currentUser?.sendEmailVerification();
+    try {
+      await _auth.currentUser?.sendEmailVerification();
+    } catch (e) {
+      debugPrint("Email verification send error: $e");
+    }
   }
 
   Future<bool> isEmailVerified() async {
-    await _auth.currentUser?.reload();
-    return _auth.currentUser?.emailVerified ?? false;
+    try {
+      await _auth.currentUser?.reload();
+      return _auth.currentUser?.emailVerified ?? false;
+    } catch (e) {
+      debugPrint("Email verify check error: $e");
+      return false;
+    }
   }
 
   Future<void> sendPasswordResetEmail(String email) async {

@@ -87,21 +87,15 @@ class _UmbrellaConditionVerificationPageState
           _remainingSeconds--;
         } else {
           timer.cancel();
-          _autoConfirm();
+          _autoReturn(); // Changed from _autoConfirm
         }
       });
     });
   }
 
-  void _autoConfirm() {
+  void _autoReturn() {
     if (!_isProcessing) {
-      // Set all checks to true for auto-confirm
-      setState(() {
-        _checkedHandle = true;
-        _checkedCanopy = true;
-        _checkedFrame = true;
-      });
-      _handleConfirm();
+      _handleReturnUmbrella("Verification Timeout (Auto-Return)");
     }
   }
 
@@ -169,21 +163,81 @@ class _UmbrellaConditionVerificationPageState
         userId: widget.userId,
         stationId: widget.stationId,
         umbrellaId: widget.umbrellaId,
+        isDamaged: true,
+        isPreRental: true,
+        damageType: reason,
       );
 
       if (mounted) {
         // Clear verification state
         context.read<RentalProvider>().clearVerification();
+        setState(() => _isProcessing = false);
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Umbrella returned successfully: $reason"),
-            backgroundColor: Colors.green,
+        // Show success and re-rental option dialog
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            title: Row(
+              children: [
+                const Icon(Icons.check_circle_rounded, color: Colors.green),
+                const SizedBox(width: 10),
+                Text(
+                  "Return Confirmed",
+                  style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "₹10.0 has been refunded to your wallet.",
+                  style: GoogleFonts.outfit(
+                    fontWeight: FontWeight.w600,
+                    color: Colors.blue[800],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  "The damaged umbrella is recorded. Would you like to rent another one from this station now?",
+                  style: GoogleFonts.outfit(),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(builder: (context) => const HomePage()),
+                    (route) => false,
+                  );
+                },
+                child: Text(
+                  "Later",
+                  style: GoogleFonts.outfit(color: Colors.grey[600]),
+                ),
+              ),
+              ElevatedButton(
+                onPressed: () => _handleRentAnother(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0052D1),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: Text(
+                  "Rent Another",
+                  style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
           ),
-        );
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (context) => const HomePage()),
-          (route) => false,
         );
       }
     } catch (e) {
@@ -191,6 +245,52 @@ class _UmbrellaConditionVerificationPageState
         setState(() => _isProcessing = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      // Trigger green blink on station to indicate it's ready for another operation
+      // or that the previous one is reverted.
+      DatabaseService().sendGreenBlinkToStation(widget.stationId);
+    }
+  }
+
+  Future<void> _handleRentAnother(BuildContext dialogContext) async {
+    // Show a loading overlay or update state
+    Navigator.of(dialogContext).pop(); // Close dialog
+    setState(() => _isProcessing = true);
+
+    try {
+      final result = await DatabaseService().rentUmbrella(
+        stationId: widget.stationId,
+        userId: widget.userId,
+      );
+
+      if (mounted) {
+        // Navigate to the new verification page for the new umbrella
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (context) => UmbrellaConditionVerificationPage(
+              userId: widget.userId,
+              stationId: widget.stationId,
+              umbrellaId: result['umbrellaId'],
+              transactionId: result['transactionId'],
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isProcessing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Re-rental error: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+        // Fallback to home
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const HomePage()),
+          (route) => false,
         );
       }
     }
@@ -226,7 +326,9 @@ class _UmbrellaConditionVerificationPageState
           ),
         );
         if (confirmed == true && context.mounted) {
-          Navigator.of(context).pop();
+          // If the user decides to exit during verification, we treat it as a return
+          // to ensure they don't walk away with an umbrella without confirming its condition.
+          _handleReturnUmbrella("User cancelled verification");
         }
       },
       child: Scaffold(
@@ -306,7 +408,7 @@ class _UmbrellaConditionVerificationPageState
               ),
               const SizedBox(height: 4),
               Text(
-                "Auto-confirm in ${_remainingSeconds ~/ 60}:${(_remainingSeconds % 60).toString().padLeft(2, '0')}",
+                "Auto-return in ${_remainingSeconds ~/ 60}:${(_remainingSeconds % 60).toString().padLeft(2, '0')}",
                 style: GoogleFonts.outfit(
                   fontSize: 12,
                   color: _remainingSeconds < 30 ? Colors.red : Colors.grey[600],
@@ -324,7 +426,7 @@ class _UmbrellaConditionVerificationPageState
     return Column(
       children: [
         SizedBox(
-          height: 250,
+          height: 280,
           child: PageView.builder(
             controller: _pageController,
             onPageChanged: (idx) => setState(() => _currentStep = idx),

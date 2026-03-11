@@ -15,8 +15,8 @@ class TransactionModel {
   final double? latitude;
   final double? longitude;
   final String status; // 'success', 'failed', 'pending'
-  final String
-  type; // 'payment', 'rental_fee', 'deposit', 'refund', 'penalty', 'coin_reward'
+  final String type; // 'payment', 'rental_fee', 'deposit', 'refund', 'penalty', 'coin_reward'
+  final String? description;
   final DateTime timestamp;
 
   TransactionModel({
@@ -35,6 +35,7 @@ class TransactionModel {
     this.longitude,
     required this.status,
     required this.type,
+    this.description,
     required this.timestamp,
   });
 
@@ -55,6 +56,7 @@ class TransactionModel {
       'longitude': longitude,
       'status': status,
       'type': type,
+      'description': description,
       'timestamp': Timestamp.fromDate(timestamp),
     };
   }
@@ -78,6 +80,7 @@ class TransactionModel {
       longitude: (data['longitude'] as num?)?.toDouble(),
       status: data['status'] ?? 'pending',
       type: data['type'] ?? 'payment',
+      description: data['description'],
       timestamp: (data['timestamp'] is Timestamp)
           ? (data['timestamp'] as Timestamp).toDate()
           : DateTime.now(),

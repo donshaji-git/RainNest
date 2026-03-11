@@ -11,6 +11,7 @@ class LocationProvider with ChangeNotifier {
   bool _isLoading = false;
   String? _errorMessage;
   StreamSubscription<Position>? _positionSubscription;
+  StreamSubscription<ServiceStatus>? _serviceStatusSubscription;
 
   LatLng? get currentLocation => _currentLocation;
   LocationPermissionState get permissionState => _permissionState;
@@ -18,6 +19,25 @@ class LocationProvider with ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
   bool get hasLocation => _currentLocation != null;
+
+  LocationProvider() {
+    _listenToServiceStatus();
+  }
+
+  void _listenToServiceStatus() {
+    _serviceStatusSubscription = Geolocator.getServiceStatusStream().listen((
+      status,
+    ) {
+      bool enabled = status == ServiceStatus.enabled;
+      if (_isServiceEnabled != enabled) {
+        _isServiceEnabled = enabled;
+        if (enabled) {
+          refreshLocation();
+        }
+        notifyListeners();
+      }
+    });
+  }
 
   /// Initialize and request location
   Future<void> initialize() async {
@@ -31,6 +51,7 @@ class LocationProvider with ChangeNotifier {
       _permissionState = state;
 
       if (state == LocationPermissionState.granted) {
+        _isServiceEnabled = true; // If granted, we check service anyway
         // Start listening to live updates immediately
         _startLocationStream();
 
@@ -49,7 +70,7 @@ class LocationProvider with ChangeNotifier {
       } else if (state == LocationPermissionState.disabled) {
         _isServiceEnabled = false;
         _errorMessage = 'Location service is disabled. Opening settings...';
-        await LocationService.openLocationSettings();
+        // Removed automatic settings opening to avoid UX friction; Guard UI will handle it
       } else {
         _errorMessage = 'Location permission denied';
       }
@@ -80,27 +101,29 @@ class LocationProvider with ChangeNotifier {
 
   /// Refresh current location
   Future<void> refreshLocation() async {
-    if (_permissionState != LocationPermissionState.granted) {
-      await initialize();
-      return;
-    }
-
-    _isLoading = true;
-    notifyListeners();
-
-    try {
-      final position = await LocationService.getCurrentPosition();
-      if (position != null) {
-        _currentLocation = LatLng(position.latitude, position.longitude);
-        _errorMessage = null;
-        _startLocationStream(); // Ensure stream is running
-      }
-    } catch (e) {
-      _errorMessage = 'Error refreshing location: $e';
-      debugPrint(_errorMessage);
-    } finally {
-      _isLoading = false;
+    // If permission is already granted, just try to get position
+    if (_permissionState == LocationPermissionState.granted) {
+      _isLoading = true;
       notifyListeners();
+
+      try {
+        final position = await LocationService.getCurrentPosition();
+        if (position != null) {
+          _currentLocation = LatLng(position.latitude, position.longitude);
+          _errorMessage = null;
+          _isServiceEnabled = true;
+          _startLocationStream(); // Ensure stream is running
+        }
+      } catch (e) {
+        _errorMessage = 'Error refreshing location: $e';
+        debugPrint(_errorMessage);
+      } finally {
+        _isLoading = false;
+        notifyListeners();
+      }
+    } else {
+      // If not granted, re-initialize (which checks permission)
+      await initialize();
     }
   }
 
@@ -117,6 +140,7 @@ class LocationProvider with ChangeNotifier {
   @override
   void dispose() {
     _positionSubscription?.cancel();
+    _serviceStatusSubscription?.cancel();
     super.dispose();
   }
 }
