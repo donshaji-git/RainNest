@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="RainNest – Smart Umbrella Ecosystem. IoT-powered umbrella sharing system.">
+    <title>RainNest – Smart Umbrella Ecosystem</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Outfit:wght@500;700;900&display=swap" rel="stylesheet">
+
+    <!-- Three.js via CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- LOADING SCREEN -->
+    <div id="loading-screen">
+        <div class="loader-content">
+            <div class="loader-ring"></div>
+            <p class="loader-label">SYNCING NETWORK</p>
+        </div>
+    </div>
+
+    <!-- THREE.JS CANVAS -->
+    <canvas id="bg-canvas"></canvas>
+
+    <!-- ====== PAGE WRAPPER ====== -->
+    <div class="page-wrapper">
+
+        <!-- TOP HEADER with LOGO -->
+        <header class="top-header">
+            <div class="brand-logo">
+                <img src="logo copy.png" alt="RainNest Logo" id="site-logo">
+                <span class="brand-name">RainNest</span>
+            </div>
+        </header>
+
+        <!-- LEFT SIDE: Fixed Hero Text -->
+        <aside class="left-panel">
+            <div class="left-text">
+                <h1 class="hero-title">RainNest –<br>Smart Umbrella<br>Ecosystem</h1>
+                <p class="hero-sub">
+                    RainNest is an IoT powered umbrella sharing system that helps people
+                    stay prepared for unexpected rain. Using smart kiosks, mobile apps,
+                    and cloud connectivity, users can easily borrow and return umbrellas anytime.
+                </p>
+            </div>
+        </aside>
+
+        <!-- RIGHT SIDE: Curved Navigation -->
+        <nav class="curved-nav" id="curved-nav">
+            <div class="nav-track">
+                <button class="nav-dot active" data-index="0" title="Home">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                        <polyline points="9 22 9 12 15 12 15 22"/>
+                    </svg>
+                    <span class="dot-label">Home</span>
+                </button>
+                <button class="nav-dot" data-index="1" title="About">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="16" x2="12" y2="12"/>
+                        <line x1="12" y1="8" x2="12.01" y2="8"/>
+                    </svg>
+                    <span class="dot-label">About</span>
+                </button>
+                <button class="nav-dot" data-index="2" title="How It Works">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                    </svg>
+                    <span class="dot-label">How It Works</span>
+                </button>
+                <button class="nav-dot" data-index="3" title="Download">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    <span class="dot-label">Download</span>
+                </button>
+                <button class="nav-dot" data-index="4" title="Contact">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                        <polyline points="22,6 12,13 2,6"/>
+                    </svg>
+                    <span class="dot-label">Contact</span>
+                </button>
+            </div>
+        </nav>
+
+        <!-- SCROLL CONTAINER: Sections for content -->
+        <div class="scroll-container" id="scroll-container">
+
+            <!-- SECTION 0: Hero (blank — hero text always visible on left) -->
+            <section class="section" id="section-0"></section>
+
+            <!-- SECTION 1: About -->
+            <section class="section" id="section-1">
+                <div class="content-card">
+                    <span class="card-label">About</span>
+                    <h2>What is RainNest?</h2>
+                    <p>
+                        RainNest is a revolutionary urban mobility solution designed to provide
+                        weather protection on demand. Our network of smart IoT kiosks ensures
+                        you're never caught off guard by the rain. By integrating sensors, 
+                        mobile apps, and real-time cloud data, we're building infrastructure 
+                        for a smarter, more resilient city.
+                    </p>
+                    <div class="tag-row">
+                        <span class="tag">Flutter App</span>
+                        <span class="tag">NodeMCU IoT</span>
+                        <span class="tag">Firebase Cloud</span>
+                        <span class="tag">MQTT Protocol</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SECTION 2: How It Works -->
+            <section class="section" id="section-2">
+                <div class="content-card">
+                    <span class="card-label">How It Works</span>
+                    <h2>Simple Steps</h2>
+                    <ul class="steps">
+                        <li><span class="num">01</span> Open the RainNest mobile app</li>
+                        <li><span class="num">02</span> Locate a nearby kiosk on the map</li>
+                        <li><span class="num">03</span> Scan the QR code at the kiosk</li>
+                        <li><span class="num">04</span> Take the umbrella</li>
+                        <li><span class="num">05</span> Return it to any kiosk when done</li>
+                    </ul>
+                </div>
+            </section>
+
+            <!-- SECTION 3: Download -->
+            <section class="section" id="section-3">
+                <div class="content-card">
+                    <span class="card-label">Get the App</span>
+                    <h2>Download RainNest</h2>
+                    <p>
+                        Download the RainNest mobile application to locate nearby umbrella
+                        kiosks, unlock umbrellas, and manage your rentals — all from your phone.
+                    </p>
+                    <div class="card-actions">
+                        <a href="https://github.com/donshaji-git/rainnest-app/releases/latest/download/app-release.apk" 
+                           class="btn-primary" id="apk-btn">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="7 10 12 15 17 10"/>
+                                <line x1="12" y1="15" x2="12" y2="3"/>
+                            </svg>
+                            Download APK
+                        </a>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SECTION 4: Contact -->
+            <section class="section" id="section-4">
+                <div class="content-card">
+                    <span class="card-label">Contact</span>
+                    <h2>Get In Touch</h2>
+                    <div class="contact-list">
+                        <a href="mailto:support@rainnest.com" class="contact-row">
+                            <span class="c-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                                    <polyline points="22,6 12,13 2,6"/>
+                                </svg>
+                            </span>
+                            <div>
+                                <span class="c-label">Email</span>
+                                <span class="c-value">support@rainnest.com</span>
+                            </div>
+                        </a>
+                        <a href="https://github.com/donshaji-git" target="_blank" class="contact-row">
+                            <span class="c-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
+                                </svg>
+                            </span>
+                            <div>
+                                <span class="c-label">GitHub</span>
+                                <span class="c-value">github.com/donshaji-git</span>
+                            </div>
+                        </a>
+                        <a href="tel:7907910831" class="contact-row">
+                            <span class="c-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+                                </svg>
+                            </span>
+                            <div>
+                                <span class="c-label">Phone</span>
+                                <span class="c-value">7907910831</span>
+                            </div>
+                        </a>
+                    </div>
+                </div>
+            </section>
+
+        </div><!-- end scroll-container -->
+
+    </div><!-- end page-wrapper -->
+
+    <script src="script.js"></script>
+</body>
+</html>

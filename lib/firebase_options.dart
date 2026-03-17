@@ -58,6 +58,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '757329562668',
     projectId: 'rainnest-aab0f',
     storageBucket: 'rainnest-aab0f.firebasestorage.app',
+    databaseURL: 'https://rainnest-aab0f-default-rtdb.asia-southeast1.firebasedatabase.app/',
   );
 
 }
